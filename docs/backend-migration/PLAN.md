@@ -3,8 +3,18 @@
 **Goal:** the same Flutter app runs against **either** Supabase (today) **or** a new Node.js + MySQL API,
 chosen by one build flag. Supabase mode must keep working exactly as it does now.
 
-**Status (2026-09-19):** plan + a validated MySQL schema. **No app code has been changed.**
-Files here: `PLAN.md` (this), `schema.mysql.sql` (MySQL 8.4 DDL), `verify/` (re-runnable checks).
+**Status (2026-09-25):** Phases 1–8 **built and tested**, not just planned. `backend/` is a working Fastify +
+MySQL API covering all 12 modules (57 methods, matching the original `SupabaseService` surface); `lib/core/backend/`
+is the Flutter side (`PosBackend` abstraction + `RestBackend`), switchable with `--dart-define=USE_SUPABASE=false`.
+Supabase mode is untouched — `SupabaseService` was not modified beyond the 4 methods noted in §0.4, and
+`USE_SUPABASE` defaults to `true`. Verified via `backend/scripts/smoke.mjs` (85 checks incl. a cross-tenant attack
+battery), a load test, an RBAC-enforce check, a rate-limiter tenant-isolation check, a backup/restore drill, and a
+live Dart integration test (`test/rest_backend_live_test.dart`) hitting the real API. See §9 for the specific bugs
+this found and fixed, and for exactly what is **not** done: Phase 0 (needs you — leaked keys, git history),
+Phase 7 execution (ETL script is written and typechecked but has not been run against the live Supabase project),
+and Phase 9 execution (`docs/backend-migration/CUTOVER.md` is a runbook; no production host/MySQL exists to cut
+over to yet).
+Files here: `PLAN.md` (this), `schema.mysql.sql` (MySQL 8.4 DDL), `verify/` (re-runnable checks), `CUTOVER.md` (Phase 9 runbook).
 Companion: `../web-view/PLAN.md` (browser/desktop version of the app) — a *public* web release depends on this backend.
 
 ```bash
@@ -526,11 +536,54 @@ restore drill**; log/uptime alerts; `npm audit`; OWASP API Top-10 pass.
   login case-insensitivity and no wildcard.
 * Driver: the `typeCast` pitfall (§3.4) and money-rounding parity (13/13 boundary values).
 
-**Not verified — be aware:**
-* No Node API, Flutter, or ETL code exists yet; everything in §4–§7 is design. Effort figures are estimates.
-* MariaDB compatibility, real-network latency, and MySQL performance under production load were not tested.
-* The live data findings are a 2026-09-19 snapshot; re-run the §1.3 queries before the ETL.
-* The inclusive-vs-exclusive GST question (#5) is an accounting decision I can't make from the data.
+**Update (2026-09-25) — Phases 1–8 built and verified against real code, not just design:**
+
+* **Node API** (`backend/`): all 12 modules implemented and passing `backend/scripts/smoke.mjs` (85 end-to-end HTTP
+  checks) against a local `mysql-memory-server` (embedded MySQL 8.4). RBAC checked in both log-only and
+  `RBAC_ENFORCE=true` mode. Load-tested with `autocannon` (`scripts/loadtest.mjs`). Backup/restore drilled with the
+  embedded MySQL's bundled `mysqldump`/`mysql` binaries.
+* **Flutter `RestBackend`** (`lib/core/backend/rest/`): full ~50-method implementation of `PosBackend`, exercised by
+  a live (non-mocked) integration test, `test/rest_backend_live_test.dart`, against a running local instance of the
+  Node API — confirmed passing.
+* **Real bugs found and fixed during this build-and-test pass** (not present in the original design, found by
+  actually running things):
+  1. **Cross-tenant authorization gap.** `admin`/`owner` roles bypass the permission check, but several
+     mutate-by-`:id` routes (across items/inventory/tables/covers/orders/bills/kitchen) never checked that the
+     target row actually belonged to the caller's own company — an admin of company A could act on company B's
+     data by guessing/enumerating an id. Found with a cross-tenant force-logout smoke test. Fixed with tenant-
+     ownership guards (`src/lib/tenant.ts`) added to every affected mutating endpoint, verified with a 14+ request
+     attack battery in `smoke.mjs` (all correctly blocked) plus confirmation normal same-company access still works.
+  2. **Rate limiting was keyed by IP**, not by user — under a load test this both wrongly throttled all simulated
+     traffic together and, more importantly, would let one tenant's traffic rate-limit an unrelated tenant sharing
+     a NAT'd IP (e.g. two devices on the same café Wi-Fi, or two cafés behind one ISP). Fixed with a custom
+     `keyGenerator` bucketing by the JWT subject when present, falling back to IP only for unauthenticated
+     requests. Verified with `scripts/rate-limit-key-check.mjs`: exhausting tenant A's budget (300/min) never
+     affects tenant B.
+  3. **Refresh-token reuse detection was silently rolled back** — the revocation `UPDATE` ran inside a DB
+     transaction that then threw an error to signal "reuse detected," which rolled the revocation back too,
+     defeating the whole point. Fixed by returning a typed result and only throwing after the transaction commits.
+     Caught by a smoke test asserting reuse revokes the whole session family.
+  4. Smaller fixes along the way: a missing `id` on `user_permission` inserts (no DB default on that PK, would
+     have failed the first real insert); `.gitignore`'s `uploads/` pattern was unanchored and also hid the real
+     `backend/src/modules/uploads/` source directory from git — anchored to `/uploads/`; a missing route
+     (`POST /items/:id/default-variant-pointer`) whose service function existed but was never wired up; Fastify
+     rejecting empty-body JSON requests.
+* **Dependency versions were bumped for known CVEs** found via `npm audit` while building, not left at
+  whatever `npm install` picked first: `@fastify/jwt` → `^10.2.2`, `@fastify/static` → `^10.1.4`. Production
+  dependencies are at zero vulnerabilities.
+* **ETL** (`backend/scripts/migrate-from-supabase.ts`, Phase 7): written and typechecked, but **has not been run**
+  against the live Supabase project — that requires the Phase 0 security items done first and a target production
+  MySQL to migrate into, neither of which exists yet.
+* **Cutover** (Phase 9, `CUTOVER.md`): documented as a runbook, **not executed** — there is no production host or
+  production MySQL instance to cut over to.
+
+**Still not verified — be aware:**
+* MariaDB compatibility, real production-network latency/TLS/firewall behaviour, and MySQL performance under real
+  (not load-tested-locally) production traffic.
+* The live data findings in §1.2/§1.3 are a 2026-09-19 snapshot; re-run those queries before running the ETL for real.
+* The inclusive-vs-exclusive GST question (#5) is an accounting decision that still needs you, not code.
+* Phase 0 (leaked `service_role` key rotation, git history purge, seeded password changes) has not been done —
+  it requires actions only you can take (rotating keys in the Supabase dashboard, rewriting git history).
 
 ## 10. Decisions I made so you didn't have to answer questions (change any of them)
 
