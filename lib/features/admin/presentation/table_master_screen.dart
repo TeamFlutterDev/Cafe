@@ -6,6 +6,9 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/widgets/adaptive_app_bar.dart';
+import '../../../core/widgets/web_kit.dart';
+import '../../../core/widgets/web_layout.dart';
 import '../../../core/backend/backend.dart';
 import '../../../core/utils/api_helper.dart';
 import '../../../core/utils/network_check.dart' as net;
@@ -30,6 +33,11 @@ class _TableMasterScreenState extends ConsumerState<TableMasterScreen> {
   bool _isLoading = false;
   List<CafeTable> _tables = [];
   Object? _loadError;
+
+  // Web: list vs floor view, and the section filter.
+  bool _webFloorView = false;
+  String _webSection = _allSections;
+  static const _allSections = '__all__';
 
   // Common section presets surfaced as quick-pick chips in the editor.
   static const _sectionPresets = [
@@ -188,44 +196,57 @@ class _TableMasterScreenState extends ConsumerState<TableMasterScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final refresh = IconButton(
+      icon: const Icon(Icons.refresh_rounded),
+      onPressed: _isLoading ? null : _loadTables,
+      tooltip: 'Refresh',
+    );
 
     return Scaffold(
       backgroundColor: isDark ? AppColors.darkBg : const Color(0xFFF0F2F5),
-      appBar: AppBar(
-        scrolledUnderElevation: 0,
-        surfaceTintColor: Colors.transparent,
-        backgroundColor: isDark ? AppColors.darkSurface : Colors.white,
-        elevation: 0,
-        title: Text(
-          'Table Master',
-          style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 17),
-        ),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: _isLoading ? null : _loadTables,
-            tooltip: 'Refresh',
+      appBar: AdaptiveAppBar(
+        title: 'Table Master',
+        webActions: [
+          refresh,
+          WebHeaderButton(
+            icon: Icons.add_rounded,
+            label: 'Add Table',
+            onPressed: () => _showEditor(),
           ),
         ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Divider(
-            height: 1,
-            color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+        mobile: AppBar(
+          scrolledUnderElevation: 0,
+          surfaceTintColor: Colors.transparent,
+          backgroundColor: isDark ? AppColors.darkSurface : Colors.white,
+          elevation: 0,
+          title: Text(
+            'Table Master',
+            style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 17),
+          ),
+          centerTitle: true,
+          actions: [refresh],
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(1),
+            child: Divider(
+              height: 1,
+              color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+            ),
           ),
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showEditor(),
-        backgroundColor: AppColors.primaryOrange,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.add_rounded),
-        label: Text(
-          'Add Table',
-          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
-        ),
-      ),
+      // Web puts "Add Table" in the page header instead.
+      floatingActionButton: WebLayout.enabled
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: () => _showEditor(),
+              backgroundColor: AppColors.primaryOrange,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.add_rounded),
+              label: Text(
+                'Add Table',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+              ),
+            ),
       body: _buildBody(isDark),
     );
   }
@@ -241,6 +262,9 @@ class _TableMasterScreenState extends ConsumerState<TableMasterScreen> {
       return _buildEmptyState(isDark);
     }
 
+    if (WebLayout.enabled && context.isWideWindow) {
+      return _buildWebBody(isDark);
+    }
     if (context.isWideWindow) {
       return _buildWideBody(isDark);
     }
@@ -341,6 +365,258 @@ class _TableMasterScreenState extends ConsumerState<TableMasterScreen> {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+
+  // ─── Web layout ────────────────────────────────────────────────────────────
+
+  (Color, String, IconData) _webStatus(CafeTable t) => t.isOccupied
+      ? (AppColors.tableOccupied, 'Occupied', Icons.restaurant_rounded)
+      : !t.isActive
+      ? (AppColors.textDarkMuted, 'Inactive', Icons.block_rounded)
+      : (AppColors.tableFree, 'Available', Icons.check_circle_rounded);
+
+  Widget _buildWebBody(bool isDark) {
+    final total = _tables.length;
+    final occupied = _tables.where((t) => t.isOccupied).length;
+    final inactive = _tables.where((t) => !t.isActive).length;
+    final free = total - occupied - inactive;
+    final seats = _tables
+        .where((t) => t.isActive)
+        .fold<int>(0, (a, t) => a + t.seatingCapacity);
+
+    final sectionCounts = <String, int>{};
+    for (final t in _tables) {
+      final sec = t.section ?? 'Main';
+      sectionCounts[sec] = (sectionCounts[sec] ?? 0) + 1;
+    }
+    final sectionNames = sectionCounts.keys.toList()..sort();
+    if (_webSection != _allSections && !sectionCounts.containsKey(_webSection)) {
+      _webSection = _allSections;
+    }
+    final visible = _webSection == _allSections
+        ? _tables
+        : _tables.where((t) => (t.section ?? 'Main') == _webSection).toList();
+
+    return WebPageBody(
+      onRefresh: _loadTables,
+      children: [
+        WebResponsiveRow(
+          minChildWidth: 190,
+          children: [
+            WebStatTile(
+              label: 'Tables',
+              value: '$total',
+              icon: Icons.table_restaurant_rounded,
+              caption: '${sectionNames.length} section${sectionNames.length == 1 ? '' : 's'}',
+            ),
+            WebStatTile(
+              label: 'Available',
+              value: '$free',
+              icon: Icons.event_available_rounded,
+              accent: AppColors.tableFree,
+              progress: total > 0 ? free / total : 0,
+            ),
+            WebStatTile(
+              label: 'Occupied',
+              value: '$occupied',
+              icon: Icons.restaurant_rounded,
+              accent: AppColors.tableOccupied,
+              progress: total > 0 ? occupied / total : 0,
+            ),
+            WebStatTile(
+              label: 'Inactive',
+              value: '$inactive',
+              icon: Icons.block_rounded,
+              accent: AppColors.textDarkMuted,
+              caption: 'Hidden from POS',
+            ),
+            WebStatTile(
+              label: 'Seating capacity',
+              value: '$seats',
+              icon: Icons.event_seat_rounded,
+              accent: AppColors.info,
+              caption: 'Across active tables',
+            ),
+          ],
+        ),
+        const SizedBox(height: WebSpace.xl),
+        Wrap(
+          spacing: WebSpace.md,
+          runSpacing: WebSpace.md,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          alignment: WrapAlignment.spaceBetween,
+          children: [
+            WebSegmented<String>(
+              selected: _webSection,
+              onChanged: (v) => setState(() => _webSection = v),
+              segments: [
+                WebSegment(_allSections, 'All sections', count: total),
+                for (final sec in sectionNames)
+                  WebSegment(sec, sec, count: sectionCounts[sec]),
+              ],
+            ),
+            WebSegmented<bool>(
+              selected: _webFloorView,
+              onChanged: (v) => setState(() => _webFloorView = v),
+              segments: const [
+                WebSegment(false, 'Table', icon: Icons.view_list_rounded),
+                WebSegment(true, 'Floor', icon: Icons.grid_view_rounded),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: WebSpace.lg),
+        if (_webFloorView) _buildWebFloor(isDark, visible) else _buildWebTable(visible),
+      ],
+    );
+  }
+
+  Widget _buildWebTable(List<CafeTable> rows) {
+    return AppDataTable<CafeTable>(
+      title: 'Tables',
+      rows: rows,
+      rowsPerPage: 25,
+      emptyMessage: 'No tables in this section',
+      searchText: (t) => '${t.tableNumber} ${t.section ?? ''}',
+      onRowTap: _onEditTap,
+      actions: [AppRowAction<CafeTable>('Edit table', Icons.edit_outlined, _onEditTap)],
+      columns: [
+        AppColumn<CafeTable>(
+          label: 'Table',
+          value: (t) => t.tableNumber,
+          cell: (t) => Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              WebIconBadge(
+                icon: Icons.table_restaurant_rounded,
+                color: _webStatus(t).$1,
+                size: 30,
+              ),
+              const SizedBox(width: WebSpace.md),
+              Text('Table ${t.tableNumber}', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+            ],
+          ),
+        ),
+        AppColumn<CafeTable>(label: 'Section', value: (t) => t.section ?? 'Main'),
+        AppColumn<CafeTable>(
+          label: 'Seats',
+          value: (t) => t.seatingCapacity,
+          numeric: true,
+          size: ColumnSize.S,
+        ),
+        AppColumn<CafeTable>(
+          label: 'Live order',
+          value: (t) => t.activeOrderTotal,
+          numeric: true,
+          minWindow: WindowClass.large,
+          cell: (t) => Text(
+            t.isOccupied ? '₹${t.activeOrderTotal.toStringAsFixed(0)} · ${t.activeCoverCount} cover${t.activeCoverCount == 1 ? '' : 's'}' : '—',
+          ),
+        ),
+        AppColumn<CafeTable>(
+          label: 'Status',
+          value: (t) => _webStatus(t).$2,
+          size: ColumnSize.S,
+          cell: (t) {
+            final (color, label, icon) = _webStatus(t);
+            return WebStatusPill(label: label, color: color, icon: icon);
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWebFloor(bool isDark, List<CafeTable> rows) {
+    if (rows.isEmpty) {
+      return const WebEmptyState(icon: Icons.table_restaurant_outlined, title: 'No tables in this section');
+    }
+    final bySection = <String, List<CafeTable>>{};
+    for (final t in rows) {
+      bySection.putIfAbsent(t.section ?? 'Main', () => []).add(t);
+    }
+    final keys = bySection.keys.toList()..sort();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final sec in keys) ...[
+          WebCard(
+            title: sec,
+            subtitle: '${bySection[sec]!.length} tables · '
+                '${bySection[sec]!.where((t) => t.isOccupied).length} occupied',
+            icon: Icons.meeting_room_outlined,
+            child: GridView.extent(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              maxCrossAxisExtent: 190,
+              mainAxisSpacing: WebSpace.md,
+              crossAxisSpacing: WebSpace.md,
+              childAspectRatio: 1.25,
+              children: [for (final t in bySection[sec]!) _webFloorTile(isDark, t)],
+            ),
+          ),
+          const SizedBox(height: WebSpace.lg),
+        ],
+      ],
+    );
+  }
+
+  Widget _webFloorTile(bool isDark, CafeTable t) {
+    final (color, label, icon) = _webStatus(t);
+    return Material(
+      color: color.withValues(alpha: isDark ? 0.12 : 0.05),
+      borderRadius: BorderRadius.circular(WebSpace.radius),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(WebSpace.radius),
+        onTap: () => _onEditTap(t),
+        child: Container(
+          padding: const EdgeInsets.all(WebSpace.md),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(WebSpace.radius),
+            border: Border.all(color: color.withValues(alpha: 0.35)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      t.tableNumber,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        color: WebPalette.text(isDark),
+                      ),
+                    ),
+                  ),
+                  Icon(icon, size: 18, color: color),
+                ],
+              ),
+              const Spacer(),
+              Row(
+                children: [
+                  Icon(Icons.event_seat_outlined, size: 14, color: WebPalette.muted(isDark)),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${t.seatingCapacity} seats',
+                    style: GoogleFonts.inter(fontSize: 12, color: WebPalette.muted(isDark)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: WebSpace.xs),
+              Text(
+                t.isOccupied ? '₹${t.activeOrderTotal.toStringAsFixed(0)} running' : label,
+                style: GoogleFonts.inter(fontSize: 12.5, fontWeight: FontWeight.w700, color: color),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -750,10 +1026,9 @@ class _TableMasterScreenState extends ConsumerState<TableMasterScreen> {
   // ─── Editor (bottom sheet) ───────────────────────────────────────────────────
 
   void _showEditor({CafeTable? table}) {
-    showModalBottomSheet(
+    // Bottom sheet on native; a centred dialog on web.
+    showAdaptiveEditor(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (_) => _TableEditorSheet(
         existing: table,
         sectionPresets: _sectionPresets,

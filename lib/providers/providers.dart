@@ -456,6 +456,11 @@ final billsProvider = FutureProvider.family<List<Bill>, String>((
   ref,
   companyId,
 ) async {
-  final res = await Backend.getBills(companyId);
+  // Bounded window: an unfiltered call returns up to 5,000 bills with items.
+  final res = await Backend.getBills(
+    companyId,
+    startDate: DateTime.now().subtract(const Duration(days: 30)),
+    endDate: DateTime.now(),
+  );
   return res.map((e) => Bill.fromJson(e)).toList();
 });

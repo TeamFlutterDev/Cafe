@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/widgets/breadcrumbs.dart';
+import '../../../core/widgets/web_layout.dart';
 import '../../../core/backend/backend.dart';
 import '../../../core/utils/api_helper.dart';
 import 'login_screen.dart' show AmbientBackground, ScaleButton;
@@ -117,6 +119,24 @@ class _RegistrationOtpScreenState extends State<RegistrationOtpScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (WebLayout.enabled) ...[
+            Breadcrumbs(
+              crumbs: [
+                Crumb(
+                  'Sign in',
+                  icon: Icons.login_rounded,
+                  onTap: () =>
+                      Navigator.of(context).popUntil((route) => route.isFirst),
+                ),
+                Crumb(
+                  'Register company',
+                  onTap: () => Navigator.of(context).maybePop(),
+                ),
+                const Crumb('Verify OTP'),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(

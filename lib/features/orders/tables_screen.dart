@@ -3,7 +3,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cafe/core/backend/backend.dart';
 import 'package:cafe/core/utils/api_helper.dart';
 import 'package:cafe/core/widgets/network_error_view.dart';
-import 'package:cafe/core/widgets/window_class.dart';
+import 'package:cafe/core/widgets/web_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -224,7 +224,7 @@ class _TablesScreenState extends ConsumerState<TablesScreen>
                   ),
                   child: Row(
                     children: [
-                      if (!context.isWideWindow)
+                      if (context.showScreenMenuButton)
                         IconButton(
                           icon: const Icon(Icons.menu_rounded),
                           onPressed: () => Scaffold.of(context).openDrawer(),

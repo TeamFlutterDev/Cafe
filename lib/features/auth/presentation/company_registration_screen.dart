@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/widgets/breadcrumbs.dart';
+import '../../../core/widgets/web_layout.dart';
 import '../../../core/backend/backend.dart';
 import '../../../core/utils/api_helper.dart';
 import 'login_screen.dart'
@@ -75,6 +77,7 @@ class _CompanyRegistrationScreenState extends State<CompanyRegistrationScreen> {
       if (!mounted) return;
       Navigator.of(context).push(
         MaterialPageRoute(
+          settings: const RouteSettings(name: 'Verify OTP'),
           builder: (_) => RegistrationOtpScreen(
             registrationId: registrationId,
             companyId: companyId,
@@ -131,13 +134,29 @@ class _CompanyRegistrationScreenState extends State<CompanyRegistrationScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Web: breadcrumbs instead of a back button.
+          if (WebLayout.enabled) ...[
+            Breadcrumbs(
+              crumbs: [
+                Crumb(
+                  'Sign in',
+                  icon: Icons.login_rounded,
+                  onTap: () => Navigator.of(context).maybePop(),
+                ),
+                const Crumb('Register company'),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
           Row(
             children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back_rounded),
-                onPressed: () => Navigator.of(context).maybePop(),
-              ),
-              const SizedBox(width: 4),
+              if (!WebLayout.enabled) ...[
+                IconButton(
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  onPressed: () => Navigator.of(context).maybePop(),
+                ),
+                const SizedBox(width: 4),
+              ],
               Expanded(
                 child: Text(
                   'Register your company',

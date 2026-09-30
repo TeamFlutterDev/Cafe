@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/widgets/breadcrumbs.dart';
+import '../../../../core/widgets/web_layout.dart';
 import '../../../../models/inventory_models.dart';
 import '../../../../providers/providers.dart';
 import '../../../../providers/inventory_providers.dart';
@@ -37,6 +39,29 @@ class _StockSectionScreenState extends State<StockSectionScreen> {
       const StaffConsumptionScreen(),
     ];
 
+    // Web: tabs across the top (a bottom bar is a phone idiom), and the tab
+    // shows in the breadcrumbs — "Stock & Inventory › Materials"; tapping
+    // "Stock & Inventory" returns to the dashboard tab.
+    if (WebLayout.enabled) {
+      return Scaffold(
+        backgroundColor: isDark ? AppColors.darkBg : AppColors.lightBg,
+        body: BreadcrumbTail(
+          crumbs: [Crumb(_webTabs[_index].$2)],
+          onBaseTap: () => setState(() => _index = 0),
+          child: Column(
+            children: [
+              _WebTabStrip(
+                isDark: isDark,
+                selected: _index,
+                onSelect: (i) => setState(() => _index = i),
+              ),
+              Expanded(child: IndexedStack(index: _index, children: tabs)),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: isDark ? AppColors.darkBg : AppColors.lightBg,
       body: IndexedStack(index: _index, children: tabs),
@@ -70,6 +95,85 @@ class _StockSectionScreenState extends State<StockSectionScreen> {
             label: 'Staff',
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Web tab labels, in [_StockSectionScreenState]'s tab order.
+const List<(IconData, String)> _webTabs = [
+  (Icons.dashboard_rounded, 'Dashboard'),
+  (Icons.science_rounded, 'Materials'),
+  (Icons.fact_check_rounded, 'Day-End'),
+  (Icons.swap_horiz_rounded, 'Handover'),
+  (Icons.people_rounded, 'Staff'),
+];
+
+class _WebTabStrip extends StatelessWidget {
+  const _WebTabStrip({
+    required this.isDark,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  final bool isDark;
+  final int selected;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final border = isDark ? AppColors.darkBorder : AppColors.lightBorder;
+    final muted = isDark ? AppColors.textWhiteMuted : AppColors.textDarkMuted;
+    final active = isDark ? AppColors.primaryAmber : AppColors.primaryOrange;
+
+    return Material(
+      color: isDark ? AppColors.darkSurface : AppColors.lightSurface,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: WebTokens.gutter - 8),
+        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: border))),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (var i = 0; i < _webTabs.length; i++)
+                InkWell(
+                  onTap: () => onSelect(i),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(
+                          color: i == selected ? active : Colors.transparent,
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _webTabs[i].$1,
+                          size: 18,
+                          color: i == selected ? active : muted,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _webTabs[i].$2,
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: i == selected ? FontWeight.w700 : FontWeight.w500,
+                            color: i == selected
+                                ? (isDark ? AppColors.textWhite : AppColors.textDark)
+                                : muted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

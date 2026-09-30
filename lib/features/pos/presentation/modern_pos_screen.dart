@@ -8,7 +8,8 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/backend/backend.dart';
 import '../../../core/utils/api_helper.dart';
 import '../../../core/widgets/pos_widgets.dart';
-import '../../../core/widgets/window_class.dart';
+import '../../../core/widgets/web_layout.dart';
+import '../../../core/widgets/web_panel_controls.dart';
 import '../../../models/models.dart';
 import '../../../providers/providers.dart';
 import 'package:speech_to_text/speech_to_text.dart';
@@ -31,6 +32,10 @@ class _ModernPosScreenState extends ConsumerState<ModernPosScreen>
   // field is explicitly tapped — tapping elsewhere / scrolling drops focus.
   final FocusNode _searchFocusNode = FocusNode();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  /// Web: the desktop cart panel was closed with its ✕ (the menu grid takes
+  /// the full width; the edge tab brings the panel back).
+  bool _cartHidden = false;
 
   // Cart Animation State
   String? _lastAddedItemName;
@@ -221,7 +226,8 @@ class _ModernPosScreenState extends ConsumerState<ModernPosScreen>
     // menu + cart side-by-side, on any platform/window shape.
     return LayoutBuilder(
       builder: (context, constraints) {
-        final desktopCart = constraints.maxWidth >= 1000;
+        final roomForPanel = constraints.maxWidth >= 1000;
+        final desktopCart = roomForPanel && !(WebLayout.enabled && _cartHidden);
         return Scaffold(
       key: _scaffoldKey,
       // Keep the search field's cursor/keyboard from lingering around the side
@@ -242,10 +248,20 @@ class _ModernPosScreenState extends ConsumerState<ModernPosScreen>
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(24),
           ),
-          child: _buildBillingPanel(cart, cartNotifier, isDark, user),
+          child: _buildBillingPanel(
+            cart,
+            cartNotifier,
+            isDark,
+            user,
+            onClose: WebLayout.enabled
+                ? () => _scaffoldKey.currentState?.closeEndDrawer()
+                : null,
+          ),
         ),
       ),
-      body: Row(
+      body: Stack(
+        children: [
+          Row(
         children: [
           Expanded(child: _buildMenuArea(isDark, showImages, user, itemGroupsAsync, cart, isTablet)),
           if (desktopCart)
@@ -258,7 +274,35 @@ class _ModernPosScreenState extends ConsumerState<ModernPosScreen>
                   ),
                 ),
               ),
-              child: _buildBillingPanel(cart, cartNotifier, isDark, user),
+              child: _buildBillingPanel(
+                cart,
+                cartNotifier,
+                isDark,
+                user,
+                onClose: WebLayout.enabled
+                    ? () => setState(() => _cartHidden = true)
+                    : null,
+              ),
+            ),
+        ],
+      ),
+          // Web: a closed (or drawer-mode) cart is always one click away.
+          if (WebLayout.enabled && !desktopCart)
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: PanelReopenTab(
+                  edge: PanelEdge.right,
+                  icon: Icons.shopping_cart_rounded,
+                  label: 'Cart',
+                  count: cart.length,
+                  onPressed: roomForPanel
+                      ? () => setState(() => _cartHidden = false)
+                      : () => _scaffoldKey.currentState?.openEndDrawer(),
+                ),
+              ),
             ),
         ],
       ),
@@ -757,7 +801,7 @@ class _ModernPosScreenState extends ConsumerState<ModernPosScreen>
       children: [
         // Left Edge Toggle (Open Drawer) — pointless once the nav is a
         // permanent side panel on wide/web layouts, so hide it there.
-        if (!context.isWideWindow)
+        if (context.showScreenMenuButton)
           Positioned(
             left: 0,
             top: 0,
@@ -1372,12 +1416,14 @@ class _ModernPosScreenState extends ConsumerState<ModernPosScreen>
   }
 
   // ─── BILLING PANEL ─────────────────────────────────────
+  /// [onClose] adds a ✕ to the header (web: close the side panel/drawer).
   Widget _buildBillingPanel(
     List<CartItem> cart,
     CartNotifier cartNotifier,
     bool isDark,
-    UserProfile user,
-  ) {
+    UserProfile user, {
+    VoidCallback? onClose,
+  }) {
     final discount = ref.watch(discountProvider);
     final subtotal = cart.fold<double>(0, (sum, ci) => sum + ci.total);
     final discountAmount = subtotal * (discount / 100);
@@ -1459,6 +1505,8 @@ class _ModernPosScreenState extends ConsumerState<ModernPosScreen>
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
                 ),
+              if (onClose != null)
+                PanelCloseButton(onPressed: onClose, tooltip: 'Close cart'),
             ],
           ),
         ),

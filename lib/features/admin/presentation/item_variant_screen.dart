@@ -5,6 +5,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/widgets/adaptive_app_bar.dart';
+import '../../../core/widgets/web_kit.dart';
+import '../../../core/widgets/web_layout.dart';
 import '../../../core/backend/backend.dart';
 import '../../../core/utils/api_helper.dart';
 import '../../../core/widgets/app_data_table.dart';
@@ -37,6 +40,9 @@ class _ItemVariantScreenState extends ConsumerState<ItemVariantScreen> {
   // List search
   final _searchController = TextEditingController();
   String _searchQuery = '';
+
+  // Web: filter for the item-group rail.
+  String _webGroupQuery = '';
 
   @override
   void initState() {
@@ -147,10 +153,10 @@ class _ItemVariantScreenState extends ConsumerState<ItemVariantScreen> {
     String? currentImageUrl = variant?.imageUrl;
     bool isSaving = false;
 
-    showModalBottomSheet(
+    // Bottom sheet on native; a centred dialog on web.
+    showAdaptiveEditor(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      maxWidth: 640,
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) {
           return Padding(
@@ -544,34 +550,60 @@ class _ItemVariantScreenState extends ConsumerState<ItemVariantScreen> {
     }
   }
 
+  void _selectGroup(String id) {
+    setState(() {
+      _selectedGroupId = id;
+      _selectedGroup = _groups.firstWhere((g) => g.id == id);
+      _variants = [];
+      _searchController.clear();
+      _searchQuery = '';
+    });
+    _loadVariants();
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final webWide = WebLayout.enabled && context.isWideWindow;
 
     return Scaffold(
-      backgroundColor: isDark ? AppColors.darkBg : AppColors.lightBg,
-      appBar: AppBar(
-        title: Text(
-          'Item Variant',
-          style: GoogleFonts.inter(
-            fontWeight: FontWeight.w800,
-            color: Colors.white,
+      backgroundColor: webWide
+          ? WebPalette.canvas(isDark)
+          : (isDark ? AppColors.darkBg : AppColors.lightBg),
+      appBar: AdaptiveAppBar(
+        title: 'Item Variant',
+        webActions: [
+          if (_selectedGroupId != null)
+            WebHeaderButton(
+              icon: Icons.add_rounded,
+              label: 'Add Item',
+              onPressed: () => _addOrEditVariant(),
+            ),
+        ],
+        mobile: AppBar(
+          title: Text(
+            'Item Variant',
+            style: GoogleFonts.inter(
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+            ),
           ),
-        ),
-        centerTitle: true,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [AppColors.primaryAmber, AppColors.primaryOrange],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+          centerTitle: true,
+          elevation: 0,
+          iconTheme: const IconThemeData(color: Colors.white),
+          flexibleSpace: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [AppColors.primaryAmber, AppColors.primaryOrange],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
             ),
           ),
         ),
       ),
-      floatingActionButton: _selectedGroupId != null
+      // Web puts "Add Item" in the page header instead.
+      floatingActionButton: _selectedGroupId != null && !WebLayout.enabled
           ? FloatingActionButton.extended(
               onPressed: () => _addOrEditVariant(),
               backgroundColor: AppColors.primaryOrange,
@@ -583,7 +615,9 @@ class _ItemVariantScreenState extends ConsumerState<ItemVariantScreen> {
               ),
             )
           : null,
-      body: Column(
+      body: webWide
+          ? _buildWebBody(isDark)
+          : Column(
         children: [
           // Group selector
           Container(
@@ -616,14 +650,7 @@ class _ItemVariantScreenState extends ConsumerState<ItemVariantScreen> {
                       )
                       .toList(),
                   onChanged: (v) {
-                    setState(() {
-                      _selectedGroupId = v;
-                      _selectedGroup = _groups.firstWhere((g) => g.id == v);
-                      _variants = [];
-                      _searchController.clear();
-                      _searchQuery = '';
-                    });
-                    _loadVariants();
+                    if (v != null) _selectGroup(v);
                   },
                   decoration: _inputDecoration(
                     'Item Group',
@@ -687,6 +714,420 @@ class _ItemVariantScreenState extends ConsumerState<ItemVariantScreen> {
           ),
         ],
       ),
+    );
+  }
+
+
+  // ─── Web layout: group rail + selling items ────────────────────────────────
+
+  static Color _webFoodColor(String type) => switch (type) {
+    'non-veg' => AppColors.tableOccupied,
+    'egg' => AppColors.warning,
+    _ => AppColors.tableFree,
+  };
+
+  Widget _foodMark(String type) {
+    final c = _webFoodColor(type);
+    return Container(
+      width: 14,
+      height: 14,
+      decoration: BoxDecoration(
+        border: Border.all(color: c, width: 1.5),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      alignment: Alignment.center,
+      child: Container(
+        width: 6,
+        height: 6,
+        decoration: BoxDecoration(color: c, shape: BoxShape.circle),
+      ),
+    );
+  }
+
+  Widget _webThumb(String? url, double size) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: AppColors.primaryAmber.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(size * 0.25),
+        image: url != null ? DecorationImage(image: NetworkImage(url), fit: BoxFit.cover) : null,
+      ),
+      child: url == null
+          ? Icon(Icons.fastfood_outlined, size: size * 0.5, color: AppColors.primaryAmber)
+          : null,
+    );
+  }
+
+  Widget _buildWebBody(bool isDark) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildWebGroupRail(isDark),
+        Expanded(
+          child: _isLoading && _groups.isEmpty
+              ? const Center(child: CircularProgressIndicator())
+              : _selectedGroupId == null
+              ? const WebEmptyState(
+                  icon: Icons.touch_app_outlined,
+                  title: 'Pick an item group',
+                  message: 'Choose a group on the left to see and manage the items it sells.',
+                )
+              : _buildWebGroupDetail(isDark),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWebGroupRail(bool isDark) {
+    final q = _webGroupQuery.trim().toLowerCase();
+    final groups = q.isEmpty
+        ? _groups
+        : _groups
+              .where((g) => g.itemName.toLowerCase().contains(q) || g.itemCode.toLowerCase().contains(q))
+              .toList();
+    final accent = WebPalette.accent(isDark);
+
+    return Container(
+      width: 300,
+      decoration: BoxDecoration(
+        color: WebPalette.surface(isDark),
+        border: Border(right: BorderSide(color: WebPalette.border(isDark))),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(WebSpace.lg, WebSpace.lg, WebSpace.lg, WebSpace.sm),
+            child: Row(
+              children: [
+                Text(
+                  'ITEM GROUPS',
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.2,
+                    color: WebPalette.muted(isDark),
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${_groups.length}',
+                  style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700, color: WebPalette.muted(isDark)),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(WebSpace.lg, 0, WebSpace.lg, WebSpace.md),
+            child: WebSearchField(
+              hint: 'Find a group…',
+              width: double.infinity,
+              onChanged: (v) => setState(() => _webGroupQuery = v),
+            ),
+          ),
+          Divider(height: 1, color: WebPalette.border(isDark)),
+          Expanded(
+            child: groups.isEmpty
+                ? Center(
+                    child: Text(
+                      'No groups match',
+                      style: GoogleFonts.inter(fontSize: 13, color: WebPalette.muted(isDark)),
+                    ),
+                  )
+                : Scrollbar(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.all(WebSpace.sm),
+                      itemCount: groups.length,
+                      itemBuilder: (context, i) {
+                        final g = groups[i];
+                        final selected = g.id == _selectedGroupId;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 2),
+                          child: Material(
+                            color: selected ? accent.withValues(alpha: 0.08) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(WebSpace.radiusSm),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(WebSpace.radiusSm),
+                              onTap: () => _selectGroup(g.id),
+                              child: Padding(
+                                padding: const EdgeInsets.all(WebSpace.sm + 2),
+                                child: Row(
+                                  children: [
+                                    _webThumb(g.imageUrl, 36),
+                                    const SizedBox(width: WebSpace.md),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            g.itemName,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: GoogleFonts.inter(
+                                              fontSize: 13.5,
+                                              fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                                              color: WebPalette.text(isDark),
+                                            ),
+                                          ),
+                                          Text(
+                                            '${g.itemCode.isEmpty ? 'No code' : g.itemCode} · ₹${g.baseRate.toStringAsFixed(0)}',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: GoogleFonts.inter(fontSize: 12, color: WebPalette.muted(isDark)),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: selected
+                                            ? accent.withValues(alpha: 0.14)
+                                            : WebPalette.subtle(isDark),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Text(
+                                        '${g.sellableVariants.length}',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w700,
+                                          color: selected ? accent : WebPalette.muted(isDark),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebGroupDetail(bool isDark) {
+    final g = _selectedGroup;
+    final available = _variants.where((v) => v.isActive && v.isAvailable).length;
+    final overrides = _variants.where((v) => v.hasPriceOverride).length;
+
+    return WebPageBody(
+      onRefresh: _loadVariants,
+      maxWidth: 1280,
+      children: [
+        if (g != null)
+          WebCard(
+            padding: const EdgeInsets.all(WebSpace.xl - 4),
+            child: Row(
+              children: [
+                _webThumb(g.imageUrl, 64),
+                const SizedBox(width: WebSpace.lg),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          _foodMark(g.foodType),
+                          const SizedBox(width: WebSpace.sm),
+                          Flexible(
+                            child: Text(
+                              g.itemName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.inter(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.3,
+                                color: WebPalette.text(isDark),
+                              ),
+                            ),
+                          ),
+                          if (!g.isActive) ...[
+                            const SizedBox(width: WebSpace.sm),
+                            const WebStatusPill(label: 'Inactive', color: AppColors.error, icon: Icons.block_rounded),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: WebSpace.xs),
+                      Text(
+                        [
+                          if (g.itemCode.isNotEmpty) g.itemCode,
+                          if ((g.sectionLabel ?? '').isNotEmpty) g.sectionLabel!,
+                          g.gstRate > 0 ? 'GST ${g.gstRate.toStringAsFixed(g.gstRate % 1 == 0 ? 0 : 1)}%' : 'No GST',
+                        ].join('  ·  '),
+                        style: GoogleFonts.inter(fontSize: 13, color: WebPalette.muted(isDark)),
+                      ),
+                    ],
+                  ),
+                ),
+                _webMiniStat(isDark, 'Base price', '₹${_groupBaseRate.toStringAsFixed(0)}'),
+                _webMiniStat(isDark, 'Selling items', '${_variants.length}'),
+                _webMiniStat(isDark, 'Available', '$available'),
+                _webMiniStat(isDark, 'Own price', '$overrides'),
+              ],
+            ),
+          ),
+        const SizedBox(height: WebSpace.lg),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: WebSpace.lg, vertical: WebSpace.md),
+          decoration: BoxDecoration(
+            color: AppColors.info.withValues(alpha: isDark ? 0.12 : 0.06),
+            borderRadius: BorderRadius.circular(WebSpace.radiusSm),
+            border: Border.all(color: AppColors.info.withValues(alpha: 0.2)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.info_outline_rounded, size: 18, color: AppColors.info),
+              const SizedBox(width: WebSpace.md),
+              Expanded(
+                child: Text(
+                  'Items without their own price inherit the group base price of ₹${_groupBaseRate.toStringAsFixed(0)}.',
+                  style: GoogleFonts.inter(fontSize: 13, color: WebPalette.text(isDark)),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: WebSpace.lg),
+        if (_isLoading)
+          const Padding(
+            padding: EdgeInsets.all(WebSpace.xxl * 2),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_variants.isEmpty)
+          WebCard(
+            child: WebEmptyState(
+              icon: Icons.restaurant_menu_rounded,
+              title: 'No selling items yet',
+              message: 'Add the sizes or portions this group sells — each can have its own price.',
+              action: FilledButton.icon(
+                onPressed: () => _addOrEditVariant(),
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text('Add first item'),
+              ),
+            ),
+          )
+        else
+          _buildWebVariantTable(isDark),
+      ],
+    );
+  }
+
+  Widget _webMiniStat(bool isDark, String label, String value) {
+    return Container(
+      margin: const EdgeInsets.only(left: WebSpace.sm),
+      padding: const EdgeInsets.symmetric(horizontal: WebSpace.lg, vertical: WebSpace.sm + 2),
+      decoration: BoxDecoration(
+        color: WebPalette.subtle(isDark),
+        borderRadius: BorderRadius.circular(WebSpace.radiusSm),
+        border: Border.all(color: WebPalette.border(isDark)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: GoogleFonts.inter(fontSize: 11.5, color: WebPalette.muted(isDark))),
+          Text(
+            value,
+            style: GoogleFonts.inter(fontSize: 17, fontWeight: FontWeight.w800, color: WebPalette.text(isDark)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openRecipe(ItemVariant v) => Navigator.push(
+    context,
+    MaterialPageRoute(
+      settings: RouteSettings(name: 'Recipe · ${v.variantName}'),
+      builder: (_) => RecipeEditorScreen(itemVariantId: v.id, variantName: v.variantName),
+    ),
+  );
+
+  Widget _buildWebVariantTable(bool isDark) {
+    return AppDataTable<ItemVariant>(
+      title: 'Selling items',
+      rows: _variants,
+      rowsPerPage: 25,
+      searchText: (v) => '${v.variantName} ${v.description ?? ''} ${v.hsnCode ?? ''}',
+      onRowTap: _addOrEditVariant,
+      actions: [
+        AppRowAction<ItemVariant>('Edit item', Icons.edit_outlined, _addOrEditVariant),
+        AppRowAction<ItemVariant>('Recipe', Icons.menu_book_rounded, _openRecipe),
+        AppRowAction<ItemVariant>('Delete', Icons.delete_outline_rounded, _deleteVariant),
+      ],
+      columns: [
+        AppColumn<ItemVariant>(
+          label: 'Selling item',
+          value: (v) => v.variantName,
+          size: ColumnSize.L,
+          cell: (v) => Row(
+            children: [
+              _webThumb(v.imageUrl ?? _selectedGroup?.imageUrl, 34),
+              const SizedBox(width: WebSpace.md),
+              _foodMark(v.foodType),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  v.variantName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13.5),
+                ),
+              ),
+              if (v.isDefault) ...[
+                const SizedBox(width: WebSpace.sm),
+                WebStatusPill(label: 'Default', color: WebPalette.accent(isDark), icon: Icons.star_rounded),
+              ],
+            ],
+          ),
+        ),
+        AppColumn<ItemVariant>(
+          label: 'Price',
+          value: (v) => _selectedGroup?.effectiveRateFor(v) ?? v.baseRate,
+          numeric: true,
+          cell: (v) => Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '₹${(_selectedGroup?.effectiveRateFor(v) ?? v.baseRate).toStringAsFixed(0)}',
+                style: GoogleFonts.inter(
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+              if (!v.hasPriceOverride)
+                Text('inherited', style: GoogleFonts.inter(fontSize: 11, color: WebPalette.muted(isDark))),
+            ],
+          ),
+        ),
+        AppColumn<ItemVariant>(
+          label: 'GST',
+          value: (v) => v.gstRate,
+          numeric: true,
+          size: ColumnSize.S,
+          minWindow: WindowClass.large,
+          cell: (v) => Text(
+            v.gstRate > 0 ? '${v.gstRate.toStringAsFixed(v.gstRate % 1 == 0 ? 0 : 1)}%' : '—',
+            style: GoogleFonts.inter(color: WebPalette.muted(isDark)),
+          ),
+        ),
+        AppColumn<ItemVariant>(
+          label: 'Status',
+          value: (v) => !v.isActive ? 'INACTIVE' : (!v.isAvailable ? 'SOLD OUT' : 'AVAILABLE'),
+          cell: (v) => !v.isActive
+              ? const WebStatusPill(label: 'Inactive', color: AppColors.error, icon: Icons.block_rounded)
+              : !v.isAvailable
+              ? const WebStatusPill(label: 'Sold out', color: AppColors.warning, icon: Icons.remove_shopping_cart_outlined)
+              : const WebStatusPill(label: 'Available', color: AppColors.tableFree, icon: Icons.check_rounded),
+        ),
+      ],
     );
   }
 
@@ -974,6 +1415,7 @@ class _ItemVariantScreenState extends ConsumerState<ItemVariantScreen> {
                       onPressed: () => Navigator.push(
                         context,
                         MaterialPageRoute(
+                          settings: RouteSettings(name: 'Recipe · ${v.variantName}'),
                           builder: (_) => RecipeEditorScreen(
                             itemVariantId: v.id,
                             variantName: v.variantName,
@@ -1029,6 +1471,7 @@ class _ItemVariantScreenState extends ConsumerState<ItemVariantScreen> {
             (v) => Navigator.push(
               context,
               MaterialPageRoute(
+                settings: RouteSettings(name: 'Recipe · ${v.variantName}'),
                 builder: (_) => RecipeEditorScreen(
                   itemVariantId: v.id,
                   variantName: v.variantName,

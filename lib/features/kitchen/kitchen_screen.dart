@@ -4,6 +4,8 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/widgets/web_kit.dart';
+import '../../core/widgets/web_layout.dart';
 import '../../core/widgets/window_class.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
@@ -83,6 +85,11 @@ class _KitchenScreenState extends ConsumerState<KitchenScreen> {
     final kotsAsync = ref.watch(activeKotsProvider(widget.companyId));
     final size = MediaQuery.of(context).size;
     final showSearchInHeader = size.width > 720;
+
+    // Desktop web: a kanban-style kitchen board (New · Cooking · Ready).
+    if (WebLayout.enabled && context.isWideWindow) {
+      return _buildWebBoard(isDark, kotsAsync);
+    }
 
     return Scaffold(
       backgroundColor: isDark ? AppColors.darkBg : AppColors.lightBg,
@@ -223,7 +230,9 @@ class _KitchenScreenState extends ConsumerState<KitchenScreen> {
     final size = MediaQuery.of(context).size;
     final isMobile = size.width < 600;
     final showSearchInHeader = size.width > 720;
-    final canPop = Navigator.of(context).canPop();
+    // On web this screen is a shell destination: back is the breadcrumb
+    // trail's job and ☰ lives in the shell's top bar.
+    final canPop = !WebLayout.enabled && Navigator.of(context).canPop();
 
     return Container(
       padding: EdgeInsets.symmetric(
@@ -242,7 +251,7 @@ class _KitchenScreenState extends ConsumerState<KitchenScreen> {
       ),
       child: Row(
         children: [
-          if (canPop || !context.isWideWindow)
+          if (canPop || context.showScreenMenuButton)
             IconButton(
               icon: Icon(
                 canPop ? Icons.arrow_back_ios_new_rounded : Icons.menu_rounded,
@@ -673,6 +682,365 @@ class _KitchenScreenState extends ConsumerState<KitchenScreen> {
     );
   }
 
+  // ─── WEB BOARD ─────────────────────────────────────────
+
+  List<KotMaster> _searched(List<KotMaster> kots) {
+    final q = _searchQuery.trim().toLowerCase();
+    if (q.isEmpty) return kots;
+    return kots.where((k) {
+      return k.kotNumber.toLowerCase().contains(q) ||
+          (k.tableName?.toLowerCase().contains(q) ?? false) ||
+          k.items.any((i) => i.itemNameSnapshot.toLowerCase().contains(q));
+    }).toList();
+  }
+
+  Widget _buildWebBoard(bool isDark, AsyncValue<List<KotMaster>> kotsAsync) {
+    return Scaffold(
+      backgroundColor: WebPalette.canvas(isDark),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildWebHeader(isDark),
+          Expanded(
+            child: kotsAsync.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => WebEmptyState(
+                icon: Icons.cloud_off_rounded,
+                title: "Couldn't load kitchen orders",
+                message: '$e',
+                action: FilledButton.icon(
+                  onPressed: () =>
+                      ref.invalidate(activeKotsProvider(widget.companyId)),
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: const Text('Retry'),
+                ),
+              ),
+              data: (all) => _buildWebBoardBody(isDark, all),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebBoardBody(bool isDark, List<KotMaster> all) {
+    final kots = _searched(all);
+    final now = DateTime.now();
+    List<KotMaster> by(String status) {
+      // Oldest first — the ticket that has waited longest is on top.
+      return kots.where((k) => k.status == status).toList()
+        ..sort((a, b) => (a.createdAt ?? now).compareTo(b.createdAt ?? now));
+    }
+
+    final pending = by(KotStatus.pending);
+    final cooking = by(KotStatus.inProgress);
+    final ready = by(KotStatus.done);
+    final open = [...pending, ...cooking];
+    final waits = [
+      for (final k in open)
+        if (k.createdAt != null) now.difference(k.createdAt!).inMinutes,
+    ];
+    final oldest = waits.fold<int>(0, (a, b) => a > b ? a : b);
+    final late = waits.where((m) => m >= 10).length;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        WebTokens.gutter,
+        WebTokens.gutter,
+        WebTokens.gutter,
+        0,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          WebResponsiveRow(
+            minChildWidth: 200,
+            children: [
+              WebStatTile(
+                label: 'Active tickets',
+                value: '${all.length}',
+                icon: Icons.receipt_rounded,
+                caption: _searchQuery.isEmpty
+                    ? 'Auto-refresh every 20 s'
+                    : '${kots.length} match "$_searchQuery"',
+              ),
+              WebStatTile(
+                label: 'New',
+                value: '${pending.length}',
+                icon: Icons.fiber_new_rounded,
+                accent: AppColors.primaryOrange,
+                caption: 'Waiting to start',
+              ),
+              WebStatTile(
+                label: 'Cooking',
+                value: '${cooking.length}',
+                icon: Icons.local_fire_department_rounded,
+                accent: AppColors.info,
+                caption: 'In preparation',
+              ),
+              WebStatTile(
+                label: 'Ready',
+                value: '${ready.length}',
+                icon: Icons.room_service_rounded,
+                accent: AppColors.tableFree,
+                caption: 'Awaiting pickup',
+              ),
+              WebStatTile(
+                label: 'Longest wait',
+                value: open.isEmpty ? '—' : '$oldest min',
+                icon: Icons.timer_outlined,
+                accent: late > 0 ? AppColors.error : AppColors.accentTeal,
+                caption: late > 0
+                    ? '$late ticket${late == 1 ? '' : 's'} over 10 min'
+                    : 'Everything on time',
+              ),
+            ],
+          ),
+          const SizedBox(height: WebSpace.lg),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: _buildBoardColumn(
+                    isDark,
+                    'New orders',
+                    Icons.fiber_new_rounded,
+                    AppColors.primaryOrange,
+                    pending,
+                    'No new tickets',
+                  ),
+                ),
+                const SizedBox(width: WebSpace.lg),
+                Expanded(
+                  child: _buildBoardColumn(
+                    isDark,
+                    'Cooking',
+                    Icons.local_fire_department_rounded,
+                    AppColors.info,
+                    cooking,
+                    'Nothing on the stove',
+                  ),
+                ),
+                const SizedBox(width: WebSpace.lg),
+                Expanded(
+                  child: _buildBoardColumn(
+                    isDark,
+                    'Ready to serve',
+                    Icons.room_service_rounded,
+                    AppColors.tableFree,
+                    ready,
+                    'No plates waiting',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebHeader(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(
+        WebTokens.gutter,
+        WebSpace.lg,
+        WebTokens.gutter,
+        WebSpace.lg,
+      ),
+      decoration: BoxDecoration(
+        color: WebPalette.surface(isDark),
+        border: Border(bottom: BorderSide(color: WebPalette.border(isDark))),
+      ),
+      child: Row(
+        children: [
+          WebIconBadge(
+            icon: Icons.soup_kitchen_rounded,
+            color: WebPalette.accent(isDark),
+            size: 44,
+          ),
+          const SizedBox(width: WebSpace.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Kitchen Monitor',
+                  style: GoogleFonts.inter(
+                    fontSize: WebTokens.pageTitleFontSize,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.3,
+                    color: WebPalette.text(isDark),
+                  ),
+                ),
+                Row(
+                  children: [
+                    Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: AppColors.tableFree,
+                            shape: BoxShape.circle,
+                          ),
+                        )
+                        .animate(onPlay: (c) => c.repeat(reverse: true))
+                        .fade(begin: 0.3, end: 1, duration: 900.ms),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Live · ${_formatTime()}',
+                      style: GoogleFonts.inter(
+                        fontSize: 12.5,
+                        color: WebPalette.muted(isDark),
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          WebSearchField(
+            controller: _searchController,
+            onChanged: (v) => setState(() => _searchQuery = v),
+            hint: 'Search KOT, table or dish…',
+            width: 300,
+          ),
+          const SizedBox(width: WebSpace.sm),
+          IconButton(
+            tooltip: 'Refresh now',
+            onPressed: () =>
+                ref.invalidate(activeKotsProvider(widget.companyId)),
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBoardColumn(
+    bool isDark,
+    String title,
+    IconData icon,
+    Color color,
+    List<KotMaster> kots,
+    String emptyText,
+  ) {
+    const topRadius = BorderRadius.vertical(
+      top: Radius.circular(WebSpace.radius),
+    );
+    return Container(
+      decoration: BoxDecoration(
+        color: WebPalette.subtle(isDark),
+        borderRadius: topRadius,
+        border: Border.all(color: WebPalette.border(isDark)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.fromLTRB(
+              WebSpace.lg,
+              WebSpace.md,
+              WebSpace.md,
+              WebSpace.md,
+            ),
+            decoration: BoxDecoration(
+              color: WebPalette.surface(isDark),
+              borderRadius: topRadius,
+              border: Border(
+                bottom: BorderSide(color: WebPalette.border(isDark)),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 4,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: WebSpace.sm),
+                Icon(icon, size: 18, color: color),
+                const SizedBox(width: WebSpace.sm),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: WebPalette.text(isDark),
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '${kots.length}',
+                    style: GoogleFonts.inter(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: color,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: kots.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.inbox_outlined,
+                          size: 32,
+                          color: WebPalette.muted(isDark),
+                        ),
+                        const SizedBox(height: WebSpace.sm),
+                        Text(
+                          emptyText,
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            color: WebPalette.muted(isDark),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : Scrollbar(
+                    child: ListView.separated(
+                      padding: const EdgeInsets.all(WebSpace.md),
+                      itemCount: kots.length,
+                      separatorBuilder: (_, _) =>
+                          const SizedBox(height: WebSpace.md),
+                      itemBuilder: (context, i) => _KotCard(
+                        key: ValueKey(kots[i].id),
+                        kot: kots[i],
+                        isDark: isDark,
+                        shrinkWrap: true,
+                        onStatusChange: _updateKotStatus,
+                        onItemStatusChange: _updateItemStatus,
+                      ),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+
   Widget _buildEmptyState(bool isDark) {
     return Center(
       child: Column(
@@ -733,6 +1101,7 @@ class _KotCard extends StatelessWidget {
   final Future<void> Function(KotMaster, KotItem, String) onItemStatusChange;
 
   const _KotCard({
+    super.key,
     required this.kot,
     required this.isDark,
     this.shrinkWrap = false,

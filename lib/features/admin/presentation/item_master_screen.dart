@@ -5,6 +5,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/widgets/adaptive_app_bar.dart';
+import '../../../core/widgets/breadcrumbs.dart';
+import '../../../core/widgets/web_kit.dart';
+import '../../../core/widgets/web_layout.dart';
 import '../../../core/backend/backend.dart';
 import '../../../core/utils/api_helper.dart';
 import '../../../core/widgets/app_data_table.dart';
@@ -322,6 +326,7 @@ class _ItemMasterScreenState extends ConsumerState<ItemMasterScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
+        settings: RouteSettings(name: group.itemName),
         builder: (context) => ItemVariantScreen(item: group),
       ),
     ).then((_) {
@@ -341,41 +346,28 @@ class _ItemMasterScreenState extends ConsumerState<ItemMasterScreen> {
     final user = ref.watch(authStateProvider).value;
 
     if (user == null) return const SizedBox.shrink();
+    final title = _isEditing
+        ? (_selectedItem == null ? 'New Item Group' : 'Edit Item Group')
+        : 'Item Group';
+
+    final webWide = WebLayout.enabled && context.isWideWindow;
 
     return Scaffold(
-      backgroundColor: isDark ? AppColors.darkBg : AppColors.lightBg,
-      appBar: AppBar(
-        title: Text(
-          _isEditing
-              ? (_selectedItem == null ? 'New Item Group' : 'Edit Item Group')
-              : 'Item Group',
-          style: GoogleFonts.inter(
-            fontWeight: FontWeight.w800,
-            color: Colors.white,
-          ),
-        ),
-        centerTitle: true,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [AppColors.primaryAmber, AppColors.primaryOrange],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-          ),
-        ),
-        leading: _isEditing
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () => setState(() => _isEditing = false),
-              )
-            : null,
-        actions: [
-          if (_isEditing)
-            _isLoading
-                ? const Padding(
+      backgroundColor: webWide
+          ? WebPalette.canvas(isDark)
+          : (isDark ? AppColors.darkBg : AppColors.lightBg),
+      appBar: AdaptiveAppBar(
+        title: title,
+        webActions: _isEditing
+            ? [
+                TextButton(
+                  onPressed: _isLoading
+                      ? null
+                      : () => setState(() => _isEditing = false),
+                  child: const Text('Cancel'),
+                ),
+                if (_isLoading)
+                  const Padding(
                     padding: EdgeInsets.all(14),
                     child: SizedBox(
                       width: 20,
@@ -383,13 +375,66 @@ class _ItemMasterScreenState extends ConsumerState<ItemMasterScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                   )
-                : IconButton(
-                    icon: const Icon(Icons.check_rounded),
+                else
+                  WebHeaderButton(
+                    icon: Icons.check_rounded,
+                    label: 'Save',
                     onPressed: _save,
                   ),
-        ],
+              ]
+            : [
+                WebHeaderButton(
+                  icon: Icons.add_rounded,
+                  label: 'Add Group',
+                  onPressed: _startCreateItem,
+                ),
+              ],
+        mobile: AppBar(
+          title: Text(
+            title,
+            style: GoogleFonts.inter(
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+            ),
+          ),
+          centerTitle: true,
+          elevation: 0,
+          iconTheme: const IconThemeData(color: Colors.white),
+          flexibleSpace: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [AppColors.primaryAmber, AppColors.primaryOrange],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+          ),
+          leading: _isEditing
+              ? IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: () => setState(() => _isEditing = false),
+                )
+              : null,
+          actions: [
+            if (_isEditing)
+              _isLoading
+                  ? const Padding(
+                      padding: EdgeInsets.all(14),
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : IconButton(
+                      icon: const Icon(Icons.check_rounded),
+                      onPressed: _save,
+                    ),
+          ],
+        ),
       ),
-      floatingActionButton: _isEditing
+      // Web puts "Add Group" in the page header instead.
+      floatingActionButton: _isEditing || WebLayout.enabled
           ? null
           : FloatingActionButton.extended(
               onPressed: _startCreateItem,
@@ -401,11 +446,32 @@ class _ItemMasterScreenState extends ConsumerState<ItemMasterScreen> {
                 style: GoogleFonts.inter(fontWeight: FontWeight.w700),
               ),
             ),
-      body: _isLoading && !_isEditing
-          ? const Center(child: CircularProgressIndicator())
-          : _isEditing
-          ? _buildEditor(isDark, user)
-          : _buildItemList(isDark, user),
+      // Web: "Item Group › Edit Item Group" in the shell's breadcrumbs
+      // replaces the editor's back arrow.
+      body: BreadcrumbTail(
+        crumbs: _isEditing ? [Crumb(title)] : const [],
+        onBaseTap: _isEditing ? () => setState(() => _isEditing = false) : null,
+        child: _isLoading && !_isEditing
+            ? const Center(child: CircularProgressIndicator())
+            // Desktop web: list + editor docked on the right.
+            : webWide
+            ? WebMasterDetail(
+                master: _buildItemList(isDark, user),
+                detail: _isEditing
+                    ? WebSidePanel(
+                        width: 580,
+                        title: title,
+                        subtitle: _selectedItem?.itemName ??
+                            'Name, pricing, tax and image',
+                        onClose: () => setState(() => _isEditing = false),
+                        child: _buildEditor(isDark, user),
+                      )
+                    : null,
+              )
+            : _isEditing
+            ? _buildEditor(isDark, user)
+            : _buildItemList(isDark, user),
+      ),
     );
   }
 
@@ -438,6 +504,9 @@ class _ItemMasterScreenState extends ConsumerState<ItemMasterScreen> {
       );
     }
 
+    if (WebLayout.enabled && context.isWideWindow) {
+      return _buildWebItemList(isDark);
+    }
     if (context.isWideWindow) {
       return _buildWideItemList(isDark);
     }
@@ -591,6 +660,228 @@ class _ItemMasterScreenState extends ConsumerState<ItemMasterScreen> {
 
   /// Desktop/web layout: searchable/sortable/paginated table instead of a
   /// phone-style scrolling card list.
+
+  // ─── Web list ──────────────────────────────────────────────────────────────
+
+  String _webSection = '__all__';
+
+  static Color _foodColor(String type) => switch (type) {
+    'non-veg' => AppColors.tableOccupied,
+    'egg' => AppColors.warning,
+    _ => AppColors.tableFree,
+  };
+
+  /// Indian food-type marker: coloured dot inside a square outline.
+  Widget _foodMark(String type) {
+    final c = _foodColor(type);
+    return Tooltip(
+      message: switch (type) {
+        'non-veg' => 'Non-veg',
+        'egg' => 'Contains egg',
+        _ => 'Veg',
+      },
+      child: Container(
+        width: 14,
+        height: 14,
+        decoration: BoxDecoration(
+          border: Border.all(color: c, width: 1.5),
+          borderRadius: BorderRadius.circular(3),
+        ),
+        alignment: Alignment.center,
+        child: Container(
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(color: c, shape: BoxShape.circle),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebItemList(bool isDark) {
+    final sections = <String, int>{};
+    for (final i in _items) {
+      final sec = (i.sectionLabel ?? '').isEmpty ? 'No section' : i.sectionLabel!;
+      sections[sec] = (sections[sec] ?? 0) + 1;
+    }
+    final names = sections.keys.toList()..sort();
+    if (_webSection != '__all__' && !sections.containsKey(_webSection)) {
+      _webSection = '__all__';
+    }
+    final rows = _webSection == '__all__'
+        ? _items
+        : _items
+              .where((i) => ((i.sectionLabel ?? '').isEmpty ? 'No section' : i.sectionLabel!) == _webSection)
+              .toList();
+
+    final active = _items.where((i) => i.isActive).length;
+    final sellable = _items.fold<int>(0, (a, i) => a + i.sellableVariants.length);
+    final taxed = _items.where((i) => i.gstRate > 0).length;
+
+    return WebPageBody(
+      onRefresh: _loadData,
+      children: [
+        WebResponsiveRow(
+          minChildWidth: 190,
+          children: [
+            WebStatTile(
+              label: 'Item groups',
+              value: '${_items.length}',
+              icon: Icons.category_rounded,
+              caption: '${names.length} section${names.length == 1 ? '' : 's'}',
+            ),
+            WebStatTile(
+              label: 'Active',
+              value: '$active',
+              icon: Icons.check_circle_rounded,
+              accent: AppColors.tableFree,
+              progress: _items.isEmpty ? 0 : active / _items.length,
+            ),
+            WebStatTile(
+              label: 'Selling items',
+              value: '$sellable',
+              icon: Icons.restaurant_menu_rounded,
+              accent: AppColors.info,
+              caption: 'Across all groups',
+            ),
+            WebStatTile(
+              label: 'GST applied',
+              value: '$taxed',
+              icon: Icons.receipt_rounded,
+              accent: AppColors.warning,
+              caption: '${_items.length - taxed} tax-free',
+            ),
+          ],
+        ),
+        const SizedBox(height: WebSpace.xl),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: WebSegmented<String>(
+            selected: _webSection,
+            onChanged: (v) => setState(() => _webSection = v),
+            segments: [
+              WebSegment('__all__', 'All sections', count: _items.length),
+              for (final n in names) WebSegment(n, n, count: sections[n]),
+            ],
+          ),
+        ),
+        const SizedBox(height: WebSpace.lg),
+        AppDataTable<Item>(
+          title: 'Item groups',
+          rows: rows,
+          rowsPerPage: 25,
+          emptyMessage: 'No item groups in this section',
+          searchText: (i) => '${i.itemName} ${i.itemCode} ${i.sectionLabel ?? ''} ${i.hsnCode ?? ''}',
+          onRowTap: _startEditItem,
+          actions: [
+            AppRowAction<Item>('Selling items', Icons.layers_rounded, _openVariants),
+            AppRowAction<Item>('Edit group', Icons.edit_outlined, _startEditItem),
+            AppRowAction<Item>('Delete', Icons.delete_outline_rounded, _confirmDelete),
+          ],
+          columns: [
+            AppColumn<Item>(
+              label: 'Group',
+              value: (i) => i.itemName,
+              size: ColumnSize.L,
+              cell: (i) => Row(
+                children: [
+                  _buildImagePreview(i.imageUrl, 17),
+                  const SizedBox(width: WebSpace.md),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            _foodMark(i.foodType),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                i.itemName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13.5),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (i.itemCode.isNotEmpty)
+                          Text(
+                            i.itemCode,
+                            style: GoogleFonts.inter(fontSize: 12, color: WebPalette.muted(isDark)),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            AppColumn<Item>(
+              label: 'Section',
+              value: (i) => i.sectionLabel ?? '',
+              cell: (i) => Text(
+                (i.sectionLabel ?? '').isEmpty ? '—' : i.sectionLabel!,
+                style: GoogleFonts.inter(color: WebPalette.muted(isDark)),
+              ),
+            ),
+            AppColumn<Item>(
+              label: 'HSN · GST',
+              value: (i) => i.gstRate,
+              minWindow: WindowClass.large,
+              cell: (i) => Text(
+                i.gstRate > 0
+                    ? '${i.hsnCode ?? '—'} · ${i.gstRate.toStringAsFixed(i.gstRate % 1 == 0 ? 0 : 1)}%'
+                    : 'No GST',
+                style: GoogleFonts.inter(fontSize: 12.5, color: WebPalette.muted(isDark)),
+              ),
+            ),
+            AppColumn<Item>(
+              label: 'Base price',
+              value: (i) => i.baseRate,
+              numeric: true,
+              size: ColumnSize.S,
+              cell: (i) => Text(
+                '₹${i.baseRate.toStringAsFixed(0)}',
+                style: GoogleFonts.inter(
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+            AppColumn<Item>(
+              label: 'Items',
+              value: (i) => i.sellableVariants.length,
+              numeric: true,
+              size: ColumnSize.S,
+              cell: (i) => InkWell(
+                onTap: () => _openVariants(i),
+                borderRadius: BorderRadius.circular(20),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  child: Text(
+                    '${i.sellableVariants.length} ›',
+                    style: GoogleFonts.inter(
+                      fontWeight: FontWeight.w700,
+                      color: WebPalette.accent(isDark),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            AppColumn<Item>(
+              label: 'Status',
+              value: (i) => i.isActive ? 'ACTIVE' : 'INACTIVE',
+              size: ColumnSize.S,
+              cell: (i) => i.isActive
+                  ? const WebStatusPill(label: 'Active', color: AppColors.tableFree, icon: Icons.check_rounded)
+                  : const WebStatusPill(label: 'Inactive', color: AppColors.error, icon: Icons.block_rounded),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _buildWideItemList(bool isDark) {
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),

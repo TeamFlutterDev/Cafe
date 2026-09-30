@@ -10,6 +10,7 @@ import 'package:printing/printing.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/app_data_table.dart';
 import '../../core/widgets/window_class.dart';
+import '../../core/widgets/web_layout.dart';
 import '../../models/models.dart';
 import '../../providers/report_provider.dart';
 import '../../providers/providers.dart'
@@ -17,6 +18,9 @@ import '../../providers/providers.dart'
 import '../../core/backend/backend.dart';
 import '../../core/utils/api_helper.dart';
 import 'widgets/report_widgets.dart';
+import '../../core/widgets/web_kit.dart';
+
+part 'bills_web_view.dart';
 
 class BillsScreen extends ConsumerStatefulWidget {
   final String companyId;
@@ -141,6 +145,29 @@ class _BillsScreenState extends ConsumerState<BillsScreen> {
           "Peak sales hour is $displayHour, bringing in ₹${sortedHours.first.value.toStringAsFixed(0)}.";
     } else {
       hourlyInsight = "Operating hours metrics will load once sales occur.";
+    }
+
+    // Desktop web: dashboard layout (bills_web_view.dart). Same figures,
+    // same actions — only the presentation differs.
+    if (WebLayout.enabled && context.isWideWindow) {
+      return _BillsWebDashboard(
+        state: reportState,
+        notifier: reportNotifier,
+        isDark: isDark,
+        categorySales: categorySales,
+        itemQuantities: itemQuantities,
+        itemRevenues: itemRevenues,
+        hourlySales: hourlySales,
+        totalTax: totalTax,
+        totalDiscount: totalDiscount,
+        aov: aov,
+        paymentInsight: paymentInsight,
+        hourlyInsight: hourlyInsight,
+        onExportPdf: () => _exportReportPdf(context, reportState, itemToCategory),
+        onCustomRange: () =>
+            _selectCustomDateRange(context, reportState, reportNotifier),
+        onOpenBill: (b) => _showBillDetails(context, b, isDark, dateFormat),
+      );
     }
 
     return DefaultTabController(
@@ -686,7 +713,7 @@ class _BillsScreenState extends ConsumerState<BillsScreen> {
       ),
       child: Row(
         children: [
-          if (!context.isWideWindow)
+          if (context.showScreenMenuButton)
             IconButton(
               icon: const Icon(Icons.menu_rounded),
               onPressed: () => Scaffold.of(context).openDrawer(),
@@ -1154,10 +1181,10 @@ class _BillsScreenState extends ConsumerState<BillsScreen> {
     final canEdit = perms?.canEditBill ?? false;
     final canCancel = perms?.canCancelBill ?? false;
 
-    showModalBottomSheet(
+    // Bottom sheet on native; a centred dialog on web.
+    showAdaptiveEditor(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      maxWidth: 620,
       builder: (sheetContext) => Container(
         decoration: BoxDecoration(
           color: isDark ? AppColors.darkSurface : Colors.white,
@@ -1523,10 +1550,9 @@ class _BillsScreenState extends ConsumerState<BillsScreen> {
   }
 
   void _editBill(Bill bill, bool isDark, DateFormat dateFormat) {
-    showModalBottomSheet(
+    showAdaptiveEditor(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      maxWidth: 620,
       builder: (_) => _BillEditSheet(
         bill: bill,
         companyId: widget.companyId,

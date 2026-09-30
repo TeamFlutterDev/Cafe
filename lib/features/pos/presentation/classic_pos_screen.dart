@@ -7,7 +7,8 @@ import '../../../core/backend/backend.dart';
 import '../../../core/utils/api_helper.dart';
 import '../../../core/widgets/network_error_view.dart';
 import '../../../core/widgets/pos_widgets.dart';
-import '../../../core/widgets/window_class.dart';
+import '../../../core/widgets/web_layout.dart';
+import '../../../core/widgets/web_panel_controls.dart';
 import '../../../models/models.dart';
 import '../../../providers/providers.dart';
 
@@ -23,6 +24,10 @@ class ClassicPosScreen extends ConsumerStatefulWidget {
 class _ClassicPosScreenState extends ConsumerState<ClassicPosScreen> {
   String _searchQuery = '';
   final _searchController = TextEditingController();
+
+  /// Web: the side cart was closed with its ✕ — the item list takes the full
+  /// width and the phone-style bottom bar / edge tab take over.
+  bool _cartHidden = false;
 
   @override
   void dispose() {
@@ -51,10 +56,13 @@ class _ClassicPosScreenState extends ConsumerState<ClassicPosScreen> {
     // width and misjudge whether there's real room for a side-by-side cart.
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isTablet = constraints.maxWidth > 800;
+        final roomForPanel = constraints.maxWidth > 800;
+        final isTablet = roomForPanel && !(WebLayout.enabled && _cartHidden);
         return Scaffold(
       body: SafeArea(
-        child: Row(
+        child: Stack(
+          children: [
+            Row(
           children: [
             // ─── LEFT: Item List ────────────────────────
             Expanded(
@@ -125,7 +133,7 @@ class _ClassicPosScreenState extends ConsumerState<ClassicPosScreen> {
                             ),
                           ],
                         ),
-                        if (!context.isWideWindow)
+                        if (context.showScreenMenuButton)
                           IconButton(
                             icon: const Icon(Icons.menu_rounded, size: 20),
                             onPressed: () => Scaffold.of(context).openDrawer(),
@@ -195,6 +203,26 @@ class _ClassicPosScreenState extends ConsumerState<ClassicPosScreen> {
                   discount,
                   isDark,
                   user,
+                  onClose: WebLayout.enabled
+                      ? () => setState(() => _cartHidden = true)
+                      : null,
+                ),
+              ),
+          ],
+        ),
+            if (WebLayout.enabled && roomForPanel && _cartHidden)
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                child: Center(
+                  child: PanelReopenTab(
+                    edge: PanelEdge.right,
+                    icon: Icons.shopping_cart_rounded,
+                    label: 'Cart',
+                    count: cart.length,
+                    onPressed: () => setState(() => _cartHidden = false),
+                  ),
                 ),
               ),
           ],
@@ -462,8 +490,9 @@ class _ClassicPosScreenState extends ConsumerState<ClassicPosScreen> {
     double discountAmount,
     double discount,
     bool isDark,
-    UserProfile user,
-  ) {
+    UserProfile user, {
+    VoidCallback? onClose,
+  }) {
     return Column(
       children: [
         Container(
@@ -489,6 +518,8 @@ class _ClassicPosScreenState extends ConsumerState<ClassicPosScreen> {
                     ),
                   ),
                 ),
+              if (onClose != null)
+                PanelCloseButton(onPressed: onClose, tooltip: 'Close cart'),
             ],
           ),
         ),

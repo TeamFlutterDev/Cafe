@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/widgets/web_kit.dart';
+import '../../../core/widgets/web_layout.dart';
+import '../../../core/widgets/window_class.dart';
 import '../../../core/backend/backend.dart';
 import '../../../core/utils/api_helper.dart';
 import '../../../core/utils/network_check.dart' as net;
@@ -225,6 +228,9 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final rc = _roleColor(_profile.role);
 
+    // Desktop web: account-settings page layout.
+    if (WebLayout.enabled && context.isWideWindow) return _buildWeb(isDark, rc);
+
     return Scaffold(
       backgroundColor: isDark ? AppColors.darkBg : AppColors.lightBg,
       body: Column(
@@ -237,6 +243,704 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // ─── Web layout ────────────────────────────────────────────────────────────
+
+  String get _initials => _profile.fullName.isNotEmpty
+      ? _profile.fullName
+            .split(' ')
+            .take(2)
+            .map((w) => w.isNotEmpty ? w[0] : '')
+            .join()
+            .toUpperCase()
+      : '?';
+
+  Widget _buildWeb(bool isDark, Color rc) {
+    return Scaffold(
+      backgroundColor: WebPalette.canvas(isDark),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildWebHeaderBar(isDark),
+          Expanded(
+            child: Form(
+              key: _formKey,
+              child: WebPageBody(
+                maxWidth: 1200,
+                children: [
+                  _buildWebHero(isDark, rc),
+                  const SizedBox(height: WebSpace.xl),
+                  LayoutBuilder(
+                    builder: (context, c) {
+                      final details = Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _buildWebPersonalCard(isDark, rc),
+                          const SizedBox(height: WebSpace.lg),
+                          _buildWebContactCard(isDark, rc),
+                        ],
+                      );
+                      final perms = _buildWebPermissionsCard(isDark);
+                      if (c.maxWidth < 900) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            details,
+                            const SizedBox(height: WebSpace.lg),
+                            perms,
+                          ],
+                        );
+                      }
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(flex: 3, child: details),
+                          const SizedBox(width: WebSpace.lg),
+                          Expanded(flex: 2, child: perms),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebHeaderBar(bool isDark) {
+    return Container(
+      height: WebTokens.pageHeaderHeight + 8,
+      padding: const EdgeInsets.symmetric(horizontal: WebTokens.gutter),
+      decoration: BoxDecoration(
+        color: WebPalette.surface(isDark),
+        border: Border(bottom: BorderSide(color: WebPalette.border(isDark))),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'My Profile',
+                  style: GoogleFonts.inter(
+                    fontSize: WebTokens.pageTitleFontSize,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.3,
+                    color: WebPalette.text(isDark),
+                  ),
+                ),
+                Text(
+                  _isEditing
+                      ? 'Update your name, photo and contact details'
+                      : 'Your account details and what you can access',
+                  style: GoogleFonts.inter(
+                    fontSize: 12.5,
+                    color: WebPalette.muted(isDark),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_isEditing) ...[
+            TextButton(
+              onPressed: _isLoading ? null : _cancelEdit,
+              child: const Text('Cancel'),
+            ),
+            const SizedBox(width: WebSpace.sm),
+            FilledButton.icon(
+              onPressed: _isLoading ? null : _saveProfile,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.primaryOrange,
+                foregroundColor: Colors.white,
+              ),
+              icon: _isLoading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.check_rounded, size: 18),
+              label: Text(_isLoading ? 'Saving…' : 'Save changes'),
+            ),
+          ] else
+            FilledButton.icon(
+              onPressed: _startEdit,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.primaryOrange,
+                foregroundColor: Colors.white,
+              ),
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              label: const Text('Edit profile'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _webAvatar(Color rc, double size) {
+    final hasImage = _pickedImageBytes != null;
+    final hasAvatar =
+        _profile.avatarUrl != null && _profile.avatarUrl!.isNotEmpty;
+    final image = ClipOval(
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: hasImage
+            ? Image.memory(_pickedImageBytes!, fit: BoxFit.cover)
+            : hasAvatar
+            ? Image.network(
+                _profile.avatarUrl!,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => _avatarFallback(rc, _initials),
+              )
+            : _avatarFallback(rc, _initials),
+      ),
+    );
+
+    final framed = Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: image,
+    );
+
+    if (!_isEditing) return framed;
+
+    // Edit mode: the whole avatar is the "change photo" button.
+    return Tooltip(
+      message: 'Change photo',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: _pickImage,
+          child: Stack(
+            children: [
+              framed,
+              Positioned(
+                right: 4,
+                bottom: 4,
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryOrange,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                  ),
+                  child: const Icon(
+                    Icons.photo_camera_rounded,
+                    size: 16,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebHero(bool isDark, Color rc) {
+    Widget fact(IconData icon, String label, String value) => Padding(
+      padding: const EdgeInsets.only(left: WebSpace.xl),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: WebPalette.muted(isDark)),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  color: WebPalette.muted(isDark),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: WebPalette.text(isDark),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: WebPalette.surface(isDark),
+        borderRadius: BorderRadius.circular(WebSpace.radius),
+        border: Border.all(color: WebPalette.border(isDark)),
+      ),
+      child: Stack(
+        children: [
+          // Role-tinted banner
+          Container(
+            height: 104,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  rc.withValues(alpha: isDark ? 0.45 : 0.85),
+                  rc.withValues(alpha: isDark ? 0.2 : 0.45),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+          ),
+          Positioned(
+            right: -30,
+            top: -40,
+            child: Container(
+              width: 160,
+              height: 160,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.12),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              WebSpace.xxl,
+              56,
+              WebSpace.xxl,
+              WebSpace.xl,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                _webAvatar(rc, 112),
+                const SizedBox(width: WebSpace.xl),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _profile.fullName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.5,
+                          color: WebPalette.text(isDark),
+                        ),
+                      ),
+                      const SizedBox(height: WebSpace.sm),
+                      Wrap(
+                        spacing: WebSpace.sm,
+                        runSpacing: WebSpace.xs,
+                        children: [
+                          WebStatusPill(
+                            label: _profile.role.toUpperCase(),
+                            color: rc,
+                            icon: _roleIcon(_profile.role),
+                          ),
+                          _profile.isActive
+                              ? const WebStatusPill(
+                                  label: 'Active',
+                                  color: AppColors.tableFree,
+                                  icon: Icons.check_rounded,
+                                )
+                              : const WebStatusPill(
+                                  label: 'Inactive',
+                                  color: AppColors.error,
+                                  icon: Icons.block_rounded,
+                                ),
+                          WebStatusPill(
+                            label: _profile.employeeCode,
+                            color: WebPalette.muted(isDark),
+                            icon: Icons.tag_rounded,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                if (_profile.lastLogin != null)
+                  fact(
+                    Icons.login_rounded,
+                    'Last login',
+                    _formatDateTime(_profile.lastLogin!),
+                  ),
+                if (_profile.createdAt != null)
+                  fact(
+                    Icons.calendar_today_outlined,
+                    'Member since',
+                    _formatDate(_profile.createdAt!),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Label/value pair used in the view-mode grids.
+  Widget _webDetail(
+    bool isDark,
+    IconData icon,
+    String label,
+    String? value,
+  ) {
+    final missing = value == null || value.isEmpty;
+    return Container(
+      padding: const EdgeInsets.all(WebSpace.md + 2),
+      decoration: BoxDecoration(
+        color: WebPalette.subtle(isDark),
+        borderRadius: BorderRadius.circular(WebSpace.radiusSm),
+        border: Border.all(color: WebPalette.border(isDark)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: WebPalette.muted(isDark)),
+          const SizedBox(width: WebSpace.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: GoogleFonts.inter(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: WebPalette.muted(isDark),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                SelectableText(
+                  missing ? 'Not set' : value,
+                  maxLines: 1,
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: missing ? FontWeight.w400 : FontWeight.w600,
+                    fontStyle: missing ? FontStyle.italic : FontStyle.normal,
+                    color: missing
+                        ? WebPalette.muted(isDark)
+                        : WebPalette.text(isDark),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebPersonalCard(bool isDark, Color rc) {
+    return WebCard(
+      title: 'Personal information',
+      subtitle: _isEditing
+          ? 'Employee code, username and role are managed by an admin'
+          : 'How you appear to your team',
+      icon: Icons.badge_outlined,
+      child: _isEditing
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildField(
+                  controller: _nameController,
+                  focusNode: _nameFocus,
+                  nextFocus: _phoneFocus,
+                  label: 'Full name',
+                  icon: Icons.person_outline_rounded,
+                  isDark: isDark,
+                  rc: rc,
+                  validator: (v) => v == null || v.trim().isEmpty
+                      ? 'Name is required'
+                      : null,
+                ),
+                const SizedBox(height: WebSpace.lg),
+                WebResponsiveRow(
+                  minChildWidth: 200,
+                  spacing: WebSpace.md,
+                  children: [
+                    _webDetail(isDark, Icons.tag_rounded, 'Employee code',
+                        _profile.employeeCode),
+                    _webDetail(
+                      isDark,
+                      Icons.alternate_email_rounded,
+                      'Username',
+                      _profile.username == null ? null : '@${_profile.username}',
+                    ),
+                    _webDetail(isDark, _roleIcon(_profile.role), 'Role',
+                        _profile.role.toUpperCase()),
+                  ],
+                ),
+              ],
+            )
+          : WebResponsiveRow(
+              minChildWidth: 220,
+              spacing: WebSpace.md,
+              children: [
+                _webDetail(isDark, Icons.person_outline_rounded, 'Full name',
+                    _profile.fullName),
+                _webDetail(isDark, Icons.tag_rounded, 'Employee code',
+                    _profile.employeeCode),
+                _webDetail(
+                  isDark,
+                  Icons.alternate_email_rounded,
+                  'Username',
+                  _profile.username == null ? null : '@${_profile.username}',
+                ),
+                _webDetail(isDark, _roleIcon(_profile.role), 'Role',
+                    _profile.role.toUpperCase()),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildWebContactCard(bool isDark, Color rc) {
+    return WebCard(
+      title: 'Contact',
+      subtitle: 'Used for account notices and receipts',
+      icon: Icons.contact_phone_outlined,
+      child: _isEditing
+          ? WebResponsiveRow(
+              minChildWidth: 240,
+              spacing: WebSpace.lg,
+              children: [
+                _buildField(
+                  controller: _phoneController,
+                  focusNode: _phoneFocus,
+                  nextFocus: _emailFocus,
+                  label: 'Phone',
+                  icon: Icons.phone_outlined,
+                  isDark: isDark,
+                  rc: rc,
+                  keyboardType: TextInputType.phone,
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return null;
+                    final digits = v.replaceAll(RegExp(r'\D'), '');
+                    return digits.length != 10
+                        ? 'Enter a valid 10-digit number'
+                        : null;
+                  },
+                ),
+                _buildField(
+                  controller: _emailController,
+                  focusNode: _emailFocus,
+                  label: 'Email',
+                  icon: Icons.email_outlined,
+                  isDark: isDark,
+                  rc: rc,
+                  keyboardType: TextInputType.emailAddress,
+                  textInputAction: TextInputAction.done,
+                  onFieldSubmitted: (_) => _saveProfile(),
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return null;
+                    final emailRx = RegExp(r'^[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}$');
+                    return emailRx.hasMatch(v.trim())
+                        ? null
+                        : 'Enter a valid email';
+                  },
+                ),
+              ],
+            )
+          : WebResponsiveRow(
+              minChildWidth: 220,
+              spacing: WebSpace.md,
+              children: [
+                _webDetail(isDark, Icons.phone_outlined, 'Phone', _profile.phone),
+                _webDetail(isDark, Icons.email_outlined, 'Email', _profile.email),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildWebPermissionsCard(bool isDark) {
+    final p = _permissions;
+    final groups = p == null
+        ? const <(String, IconData, List<_PermItem>)>[]
+        : [
+            (
+              'Billing',
+              Icons.receipt_long_outlined,
+              [
+                _PermItem('Create bill', p.canCreateBill),
+                _PermItem('Edit bill', p.canEditBill),
+                _PermItem('Cancel bill', p.canCancelBill),
+                _PermItem('Apply discount', p.canApplyDiscount),
+                _PermItem('Void items', p.canVoidItems),
+              ],
+            ),
+            (
+              'Access',
+              Icons.key_outlined,
+              [
+                _PermItem('View dashboard', p.canViewDashboard),
+                _PermItem('Manage tables', p.canManageTables),
+                _PermItem('View reports', p.canViewReports),
+                _PermItem('Manage items', p.canManageItems),
+              ],
+            ),
+            (
+              'Administration',
+              Icons.admin_panel_settings_outlined,
+              [
+                _PermItem('Manage users', p.canManageUsers),
+                _PermItem('Manage settings', p.canManageSettings),
+                _PermItem('Manage stock', p.canManageStock),
+              ],
+            ),
+          ];
+    final all = [for (final g in groups) ...g.$3];
+    final on = all.where((i) => i.enabled).length;
+
+    return WebCard(
+      title: 'Access & permissions',
+      subtitle: 'Set by your administrator',
+      icon: Icons.shield_outlined,
+      trailing: [
+        if (p == null && _isLoading)
+          const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        else
+          IconButton(
+            tooltip: 'Reload permissions',
+            onPressed: _loadPermissions,
+            icon: const Icon(Icons.refresh_rounded, size: 20),
+          ),
+      ],
+      child: p == null
+          ? Padding(
+              padding: const EdgeInsets.symmetric(vertical: WebSpace.xl),
+              child: Center(
+                child: TextButton.icon(
+                  onPressed: _isLoading ? null : _loadPermissions,
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: const Text('Load permissions'),
+                ),
+              ),
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      '$on of ${all.length} enabled',
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: WebPalette.text(isDark),
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${all.isEmpty ? 0 : (on / all.length * 100).round()}%',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: WebPalette.muted(isDark),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: WebSpace.sm),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: all.isEmpty ? 0 : on / all.length,
+                    minHeight: 6,
+                    color: AppColors.tableFree,
+                    backgroundColor: WebPalette.subtle(isDark),
+                  ),
+                ),
+                for (final (label, icon, items) in groups) ...[
+                  const SizedBox(height: WebSpace.lg),
+                  Row(
+                    children: [
+                      Icon(icon, size: 16, color: WebPalette.muted(isDark)),
+                      const SizedBox(width: WebSpace.sm),
+                      Text(
+                        label.toUpperCase(),
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.9,
+                          color: WebPalette.muted(isDark),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: WebSpace.xs),
+                  for (final item in items)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: Row(
+                        children: [
+                          Icon(
+                            item.enabled
+                                ? Icons.check_circle_rounded
+                                : Icons.cancel_outlined,
+                            size: 18,
+                            color: item.enabled
+                                ? AppColors.tableFree
+                                : WebPalette.muted(isDark),
+                          ),
+                          const SizedBox(width: WebSpace.sm + 2),
+                          Expanded(
+                            child: Text(
+                              item.label,
+                              style: GoogleFonts.inter(
+                                fontSize: 13.5,
+                                color: item.enabled
+                                    ? WebPalette.text(isDark)
+                                    : WebPalette.muted(isDark),
+                              ),
+                            ),
+                          ),
+                          Text(
+                            item.enabled ? 'Allowed' : 'No access',
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: item.enabled
+                                  ? AppColors.tableFree
+                                  : WebPalette.muted(isDark),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ],
+            ),
     );
   }
 
@@ -338,15 +1042,20 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 child: Row(
                   children: [
-                    IconButton(
-                      icon: Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        color: isDark
-                            ? AppColors.textWhite
-                            : AppColors.textDark,
+                    // Web opens this as a shell destination: no back button,
+                    // the breadcrumbs cover it.
+                    if (WebLayout.enabled)
+                      const SizedBox(width: WebTokens.gap * 2)
+                    else
+                      IconButton(
+                        icon: Icon(
+                          Icons.arrow_back_ios_new_rounded,
+                          color: isDark
+                              ? AppColors.textWhite
+                              : AppColors.textDark,
+                        ),
+                        onPressed: () => Navigator.pop(context),
                       ),
-                      onPressed: () => Navigator.pop(context),
-                    ),
                     Expanded(
                       child: Text(
                         'My Profile',

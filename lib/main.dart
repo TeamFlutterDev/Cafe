@@ -6,6 +6,7 @@ import 'core/backend/backend.dart';
 import 'core/routing/app_router.dart';
 import 'core/services/push_service.dart';
 import 'core/widgets/idle_timeout_guard.dart';
+import 'core/widgets/web_layout.dart';
 import 'providers/providers.dart';
 
 void main() async {
@@ -49,8 +50,13 @@ class CafePosApp extends ConsumerWidget {
       child: MaterialApp.router(
         title: 'RasaBhojan',
         debugShowCheckedModeBanner: false,
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
+        theme: WebLayout.enabled
+            ? AppTheme.adaptForWeb(AppTheme.lightTheme)
+            : AppTheme.lightTheme,
+        darkTheme: WebLayout.enabled
+            ? AppTheme.adaptForWeb(AppTheme.darkTheme)
+            : AppTheme.darkTheme,
+        scrollBehavior: WebLayout.enabled ? const WebScrollBehavior() : null,
         themeMode: isDark ? ThemeMode.dark : ThemeMode.light,
         routerConfig: router,
         builder: (context, child) =>

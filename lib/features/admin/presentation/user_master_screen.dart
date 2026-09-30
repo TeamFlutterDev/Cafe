@@ -7,6 +7,11 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/widgets/adaptive_app_bar.dart';
+import '../../../core/widgets/breadcrumbs.dart';
+import '../../../core/widgets/web_kit.dart';
+import '../../../core/widgets/web_layout.dart';
+import 'package:intl/intl.dart';
 import '../../../core/backend/backend.dart';
 import '../../../core/utils/api_helper.dart';
 import '../../../core/utils/network_check.dart' as net;
@@ -408,40 +413,61 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
+    final webWide = WebLayout.enabled && context.isWideWindow;
+
     return Scaffold(
-      backgroundColor: isDark ? AppColors.darkBg : const Color(0xFFF0F2F5),
+      backgroundColor: webWide
+          ? WebPalette.canvas(isDark)
+          : (isDark ? AppColors.darkBg : const Color(0xFFF0F2F5)),
       appBar: _buildAppBar(isDark),
-      body: _isLoading && !_isEditing
-          ? const Center(child: CircularProgressIndicator())
-          : _isEditing
-          ? _buildEditor(isDark)
-          : _buildList(isDark),
+      // Web: "User Master › Edit User" in the shell's breadcrumbs replaces
+      // the editor's close button; tapping "User Master" closes the editor.
+      body: BreadcrumbTail(
+        crumbs: _isEditing ? [Crumb(_pageTitle)] : const [],
+        onBaseTap: _isEditing ? () => setState(() => _isEditing = false) : null,
+        child: _isLoading && !_isEditing
+            ? const Center(child: CircularProgressIndicator())
+            // Desktop web: the list stays visible, the editor docks on the
+            // right (it takes over the page below ~1100 px).
+            : webWide
+            ? WebMasterDetail(
+                master: _buildList(isDark),
+                detail: _isEditing
+                    ? WebSidePanel(
+                        width: 600,
+                        title: _pageTitle,
+                        subtitle: _selectedUser?.fullName ??
+                            'Fill in the details and set permissions',
+                        onClose: () => setState(() => _isEditing = false),
+                        child: _buildEditor(isDark),
+                      )
+                    : null,
+              )
+            : _isEditing
+            ? _buildEditor(isDark)
+            : _buildList(isDark),
+      ),
     );
   }
 
+  String get _pageTitle => _isEditing
+      ? (_selectedUser == null ? 'New User' : 'Edit User')
+      : 'User Master';
+
   PreferredSizeWidget _buildAppBar(bool isDark) {
-    return AppBar(
-      scrolledUnderElevation: 0,
-      surfaceTintColor: Colors.transparent,
-      backgroundColor: isDark ? AppColors.darkSurface : Colors.white,
-      elevation: 0,
-      title: Text(
-        _isEditing
-            ? (_selectedUser == null ? 'New User' : 'Edit User')
-            : 'User Master',
-        style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 17),
-      ),
-      centerTitle: true,
-      leading: _isEditing
-          ? IconButton(
-              icon: const Icon(Icons.close_rounded),
-              onPressed: () => setState(() => _isEditing = false),
-            )
-          : null,
-      actions: [
-        if (_isEditing)
-          _isLoading
-              ? const Padding(
+    final title = _pageTitle;
+    return AdaptiveAppBar(
+      title: title,
+      webActions: _isEditing
+          ? [
+              TextButton(
+                onPressed: _isLoading
+                    ? null
+                    : () => setState(() => _isEditing = false),
+                child: const Text('Cancel'),
+              ),
+              if (_isLoading)
+                const Padding(
                   padding: EdgeInsets.all(14),
                   child: SizedBox(
                     width: 20,
@@ -449,29 +475,76 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 )
-              : IconButton(
-                  icon: const Icon(Icons.check_rounded),
+              else
+                WebHeaderButton(
+                  icon: Icons.check_rounded,
+                  label: 'Save',
                   onPressed: _saveUser,
-                  tooltip: 'Save',
-                )
-        else ...[
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: _isLoading ? null : _loadUsers,
-            tooltip: 'Refresh',
-          ),
-          IconButton(
-            icon: const Icon(Icons.person_add_rounded),
-            onPressed: _startCreate,
-            tooltip: 'Add User',
-          ),
+                ),
+            ]
+          : [
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded),
+                onPressed: _isLoading ? null : _loadUsers,
+                tooltip: 'Refresh',
+              ),
+              WebHeaderButton(
+                icon: Icons.person_add_rounded,
+                label: 'Add User',
+                onPressed: _startCreate,
+              ),
+            ],
+      mobile: AppBar(
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+        backgroundColor: isDark ? AppColors.darkSurface : Colors.white,
+        elevation: 0,
+        title: Text(
+          title,
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 17),
+        ),
+        centerTitle: true,
+        leading: _isEditing
+            ? IconButton(
+                icon: const Icon(Icons.close_rounded),
+                onPressed: () => setState(() => _isEditing = false),
+              )
+            : null,
+        actions: [
+          if (_isEditing)
+            _isLoading
+                ? const Padding(
+                    padding: EdgeInsets.all(14),
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : IconButton(
+                    icon: const Icon(Icons.check_rounded),
+                    onPressed: _saveUser,
+                    tooltip: 'Save',
+                  )
+          else ...[
+            IconButton(
+              icon: const Icon(Icons.refresh_rounded),
+              onPressed: _isLoading ? null : _loadUsers,
+              tooltip: 'Refresh',
+            ),
+            IconButton(
+              icon: const Icon(Icons.person_add_rounded),
+              onPressed: _startCreate,
+              tooltip: 'Add User',
+            ),
+          ],
         ],
-      ],
-      bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(1),
-        child: Divider(
-          height: 1,
-          color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Divider(
+            height: 1,
+            color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+          ),
         ),
       ),
     );
@@ -523,6 +596,9 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
 
     final activeCount = _users.where((u) => u.isActive).length;
 
+    if (WebLayout.enabled && context.isWideWindow) {
+      return _buildWebList(isDark, activeCount);
+    }
     if (context.isWideWindow) {
       return _buildWideList(isDark, activeCount);
     }
@@ -619,6 +695,180 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
           ),
         ],
       ),
+    );
+  }
+
+
+  // ─── Web list ──────────────────────────────────────────────────────────────
+
+  String _webRole = 'all';
+  static final _lastLoginFmt = DateFormat('d MMM, hh:mm a');
+
+  Widget _buildWebList(bool isDark, int activeCount) {
+    int roleCount(String r) => _users.where((u) => u.role.toLowerCase() == r).length;
+    final online = _users.where((u) => u.isLogin).length;
+    final rows = _webRole == 'all'
+        ? _users
+        : _users.where((u) => u.role.toLowerCase() == _webRole).toList();
+
+    return WebPageBody(
+      onRefresh: _loadUsers,
+      children: [
+        WebResponsiveRow(
+          minChildWidth: 190,
+          children: [
+            WebStatTile(
+              label: 'Team members',
+              value: '${_users.length}',
+              icon: Icons.people_alt_rounded,
+              caption: '${_roles.where((r) => roleCount(r) > 0).length} roles in use',
+            ),
+            WebStatTile(
+              label: 'Active',
+              value: '$activeCount',
+              icon: Icons.verified_user_rounded,
+              accent: AppColors.tableFree,
+              progress: _users.isEmpty ? 0 : activeCount / _users.length,
+            ),
+            WebStatTile(
+              label: 'Signed in now',
+              value: '$online',
+              icon: Icons.wifi_tethering_rounded,
+              accent: AppColors.info,
+              caption: 'Live sessions',
+            ),
+            WebStatTile(
+              label: 'Inactive',
+              value: '${_users.length - activeCount}',
+              icon: Icons.person_off_rounded,
+              accent: AppColors.textDarkMuted,
+              caption: 'Cannot sign in',
+            ),
+          ],
+        ),
+        const SizedBox(height: WebSpace.xl),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: WebSegmented<String>(
+            selected: _webRole,
+            onChanged: (v) => setState(() => _webRole = v),
+            segments: [
+              WebSegment('all', 'All roles', count: _users.length),
+              for (final r in _roles)
+                if (roleCount(r) > 0)
+                  WebSegment(r, '${r[0].toUpperCase()}${r.substring(1)}', count: roleCount(r)),
+            ],
+          ),
+        ),
+        const SizedBox(height: WebSpace.lg),
+        AppDataTable<UserProfile>(
+          title: 'Users',
+          rows: rows,
+          rowsPerPage: 25,
+          emptyMessage: 'No users with this role',
+          searchText: (u) =>
+              '${u.fullName} ${u.employeeCode} ${u.username ?? ''} ${u.email ?? ''} ${u.role}',
+          onRowTap: _startEdit,
+          actions: [
+            AppRowAction<UserProfile>('Edit user', Icons.edit_outlined, _startEdit),
+            AppRowAction<UserProfile>('Force logout', Icons.logout_rounded, (u) => _forceLogoutUser(u)),
+          ],
+          columns: [
+            AppColumn<UserProfile>(
+              label: 'User',
+              value: (u) => u.fullName,
+              size: ColumnSize.L,
+              cell: (u) => Row(
+                children: [
+                  _buildAvatar(u, _roleColor(u.role), radius: 16),
+                  const SizedBox(width: WebSpace.md),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          u.fullName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 13.5),
+                        ),
+                        if ((u.email ?? '').isNotEmpty)
+                          Text(
+                            u.email!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.inter(fontSize: 12, color: WebPalette.muted(isDark)),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            AppColumn<UserProfile>(
+              label: 'Code',
+              value: (u) => u.employeeCode,
+              size: ColumnSize.S,
+              cell: (u) => Text(
+                u.employeeCode,
+                style: GoogleFonts.inter(fontFeatures: const [FontFeature.tabularFigures()]),
+              ),
+            ),
+            AppColumn<UserProfile>(
+              label: 'Username',
+              value: (u) => u.username ?? '',
+              minWindow: WindowClass.large,
+              cell: (u) => Text(
+                u.username != null ? '@${u.username}' : '—',
+                style: GoogleFonts.inter(color: WebPalette.muted(isDark)),
+              ),
+            ),
+            AppColumn<UserProfile>(
+              label: 'Role',
+              value: (u) => u.role,
+              size: ColumnSize.S,
+              cell: (u) => _roleChip(u.role, _roleColor(u.role)),
+            ),
+            AppColumn<UserProfile>(
+              label: 'Last login',
+              value: (u) => u.lastLogin ?? DateTime(0),
+              minWindow: WindowClass.large,
+              cell: (u) => Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (u.isLogin) ...[
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(color: AppColors.tableFree, shape: BoxShape.circle),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                  Text(
+                    u.isLogin
+                        ? 'Online'
+                        : (u.lastLogin != null ? _lastLoginFmt.format(u.lastLogin!.toLocal()) : 'Never'),
+                    style: GoogleFonts.inter(
+                      fontSize: 12.5,
+                      color: u.isLogin ? AppColors.tableFree : WebPalette.muted(isDark),
+                      fontWeight: u.isLogin ? FontWeight.w700 : FontWeight.w400,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            AppColumn<UserProfile>(
+              label: 'Status',
+              value: (u) => u.isActive ? 'ACTIVE' : 'INACTIVE',
+              size: ColumnSize.S,
+              cell: (u) => u.isActive
+                  ? const WebStatusPill(label: 'Active', color: AppColors.tableFree, icon: Icons.check_rounded)
+                  : const WebStatusPill(label: 'Inactive', color: AppColors.error, icon: Icons.block_rounded),
+            ),
+          ],
+        ),
+      ],
     );
   }
 

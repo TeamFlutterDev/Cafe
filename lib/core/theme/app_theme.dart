@@ -1,3 +1,4 @@
+import 'dart:ui' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'app_colors.dart';
@@ -321,4 +322,56 @@ class AppTheme {
       ),
     );
   }
+
+  // ─── WEB ADAPTATION ──────────────────────────────────
+  /// Desktop-browser tuning layered on top of [lightTheme] / [darkTheme]:
+  /// compact density (mouse, not thumbs), 40-px buttons instead of ~52-px,
+  /// tooltips that don't linger, and scrollbars that are visible on hover.
+  /// Colours, typography and shapes are untouched, so the brand is identical.
+  static ThemeData adaptForWeb(ThemeData base) {
+    const buttonPadding = WidgetStatePropertyAll(
+      EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+    );
+    return base.copyWith(
+      visualDensity: VisualDensity.compact,
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: (base.elevatedButtonTheme.style ?? const ButtonStyle())
+            .copyWith(padding: buttonPadding),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: (base.outlinedButtonTheme.style ?? const ButtonStyle())
+            .copyWith(padding: buttonPadding),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: (base.filledButtonTheme.style ?? const ButtonStyle()).copyWith(
+          padding: buttonPadding,
+          shape: WidgetStatePropertyAll(
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        ),
+      ),
+      tooltipTheme: base.tooltipTheme.copyWith(
+        waitDuration: const Duration(milliseconds: 400),
+      ),
+      scrollbarTheme: base.scrollbarTheme.copyWith(
+        thickness: const WidgetStatePropertyAll(8),
+        radius: const Radius.circular(8),
+      ),
+    );
+  }
+}
+
+/// Web scrolling: lets a mouse drag horizontal chip rows / carousels (the
+/// default behaviour only drags on touch), keeps trackpad and stylus working.
+class WebScrollBehavior extends MaterialScrollBehavior {
+  const WebScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.invertedStylus,
+  };
 }

@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/backend/backend.dart';
 import '../../../../core/utils/api_helper.dart';
+import '../../../../core/widgets/adaptive_app_bar.dart';
 import '../../../../core/widgets/network_error_view.dart';
 import '../../../../models/inventory_models.dart';
 import '../../../../providers/providers.dart';
@@ -118,24 +119,27 @@ class _RecipeEditorScreenState extends ConsumerState<RecipeEditorScreen> {
 
     return Scaffold(
       backgroundColor: isDark ? AppColors.darkBg : AppColors.lightBg,
-      appBar: AppBar(
-        title: Text(
-          'Recipe — ${widget.variantName}',
-          style: GoogleFonts.inter(
-            fontWeight: FontWeight.w800,
-            color: Colors.white,
+      appBar: AdaptiveAppBar(
+        title: 'Recipe — ${widget.variantName}',
+        mobile: AppBar(
+          title: Text(
+            'Recipe — ${widget.variantName}',
+            style: GoogleFonts.inter(
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+            ),
+            overflow: TextOverflow.ellipsis,
           ),
-          overflow: TextOverflow.ellipsis,
-        ),
-        centerTitle: true,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [AppColors.primaryAmber, AppColors.primaryOrange],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+          centerTitle: true,
+          elevation: 0,
+          iconTheme: const IconThemeData(color: Colors.white),
+          flexibleSpace: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [AppColors.primaryAmber, AppColors.primaryOrange],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
             ),
           ),
         ),

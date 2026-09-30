@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/widgets/adaptive_app_bar.dart';
 import '../../../core/services/push_service.dart';
 import '../../../core/backend/backend.dart';
 import '../../../core/utils/api_helper.dart';
@@ -375,37 +376,40 @@ class _OwnerDashboardScreenState extends ConsumerState<OwnerDashboardScreen> {
 
     return Scaffold(
       backgroundColor: isDark ? AppColors.darkBg : const Color(0xFFF0F2F5),
-      appBar: AppBar(
-        scrolledUnderElevation: 0,
-        surfaceTintColor: Colors.transparent,
-        backgroundColor: isDark ? AppColors.darkSurface : Colors.white,
-        elevation: 0,
-        title: Text(
-          'Company Registrations',
-          style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 17),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: _loading ? null : _load,
-            tooltip: 'Refresh',
+      appBar: AdaptiveAppBar(
+        title: 'Company Registrations',
+        mobile: AppBar(
+          scrolledUnderElevation: 0,
+          surfaceTintColor: Colors.transparent,
+          backgroundColor: isDark ? AppColors.darkSurface : Colors.white,
+          elevation: 0,
+          title: Text(
+            'Company Registrations',
+            style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 17),
           ),
-          IconButton(
-            icon: const Icon(Icons.lock_reset_rounded),
-            onPressed: _showChangePasswordSheet,
-            tooltip: 'Change password',
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout_rounded),
-            onPressed: _logout,
-            tooltip: 'Sign out',
-          ),
-        ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Divider(
-            height: 1,
-            color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh_rounded),
+              onPressed: _loading ? null : _load,
+              tooltip: 'Refresh',
+            ),
+            IconButton(
+              icon: const Icon(Icons.lock_reset_rounded),
+              onPressed: _showChangePasswordSheet,
+              tooltip: 'Change password',
+            ),
+            IconButton(
+              icon: const Icon(Icons.logout_rounded),
+              onPressed: _logout,
+              tooltip: 'Sign out',
+            ),
+          ],
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(1),
+            child: Divider(
+              height: 1,
+              color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+            ),
           ),
         ),
       ),

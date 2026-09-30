@@ -4,6 +4,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/widgets/adaptive_app_bar.dart';
+import '../../../core/widgets/web_kit.dart';
+import '../../../core/widgets/web_layout.dart';
+import '../../../core/widgets/window_class.dart';
 import '../../../core/backend/backend.dart';
 import '../../../core/utils/api_helper.dart';
 import '../../../core/utils/india_data.dart';
@@ -78,6 +82,11 @@ class _CompanyMasterScreenState extends ConsumerState<CompanyMasterScreen> {
   bool _hasItemVariants = false;
   bool _showItemImages = true;
 
+  // Web settings layout: section anchors for the left-hand index.
+  final _webScroll = ScrollController();
+  final _webSectionKeys = List.generate(4, (_) => GlobalKey());
+  int _webActiveSection = 0;
+
   @override
   void initState() {
     super.initState();
@@ -94,6 +103,7 @@ class _CompanyMasterScreenState extends ConsumerState<CompanyMasterScreen> {
 
   @override
   void dispose() {
+    _webScroll.dispose();
     _nameController.dispose();
     _codeController.dispose();
     _emailController.dispose();
@@ -222,10 +232,18 @@ class _CompanyMasterScreenState extends ConsumerState<CompanyMasterScreen> {
     final isWide = screenW >= 600;
     final hPad = isWide ? 24.0 : 16.0;
 
+    final webWide = WebLayout.enabled && context.isWideWindow;
+
     return Scaffold(
-      backgroundColor: isDark ? AppColors.darkBg : const Color(0xFFF0F2F5),
+      backgroundColor: webWide
+          ? WebPalette.canvas(isDark)
+          : (isDark ? AppColors.darkBg : const Color(0xFFF0F2F5)),
       appBar: _buildAppBar(isDark),
       body: _isLoading && _company == null
+          ? const Center(child: CircularProgressIndicator())
+          : webWide
+          ? _buildWebBody(isDark)
+          : _isLoading && _company == null
           ? const Center(child: CircularProgressIndicator())
           : Form(
               key: _formKey,
@@ -278,22 +296,284 @@ class _CompanyMasterScreenState extends ConsumerState<CompanyMasterScreen> {
   }
 
   PreferredSizeWidget _buildAppBar(bool isDark) {
-    return AppBar(
-      scrolledUnderElevation: 0,
-      surfaceTintColor: Colors.transparent,
-      backgroundColor: isDark ? AppColors.darkSurface : Colors.white,
-      elevation: 0,
-      title: Text(
-        'Company Master',
-        style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 17),
-      ),
-      centerTitle: true,
-      bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(1),
-        child: Divider(
-          height: 1,
-          color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+    return AdaptiveAppBar(
+      title: 'Company Master',
+      webActions: [
+        TextButton.icon(
+          onPressed: _isLoading ? null : _loadCompanyData,
+          icon: const Icon(Icons.restart_alt_rounded, size: 18),
+          label: const Text('Discard changes'),
         ),
+        WebHeaderButton(
+          icon: Icons.check_rounded,
+          label: _isLoading ? 'Saving…' : 'Save changes',
+          onPressed: _isLoading ? null : _saveChanges,
+        ),
+      ],
+      mobile: AppBar(
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+        backgroundColor: isDark ? AppColors.darkSurface : Colors.white,
+        elevation: 0,
+        title: Text(
+          'Company Master',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 17),
+        ),
+        centerTitle: true,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Divider(
+            height: 1,
+            color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+          ),
+        ),
+      ),
+    );
+  }
+
+
+  // ─── Web settings layout ───────────────────────────────────────────────────
+
+  static const _webSections = [
+    (Icons.store_rounded, 'General', 'Name, code and contact details'),
+    (Icons.location_on_rounded, 'Address', 'Where the outlet is located'),
+    (Icons.account_balance_rounded, 'Tax & compliance', 'GST and PAN'),
+    (Icons.tune_rounded, 'Operations', 'Features switched on for POS'),
+  ];
+
+  void _scrollToWebSection(int i) {
+    setState(() => _webActiveSection = i);
+    final ctx = _webSectionKeys[i].currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOutCubic,
+        alignment: 0.05,
+      );
+    }
+  }
+
+  Widget _buildWebBody(bool isDark) {
+    final sections = [
+      _generalSection(isDark),
+      _addressSection(isDark),
+      _taxSection(isDark),
+      _operationsSection(isDark),
+    ];
+
+    return Form(
+      key: _formKey,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Section index
+          Container(
+            width: 260,
+            padding: const EdgeInsets.fromLTRB(
+              WebTokens.gutter,
+              WebTokens.gutter,
+              WebSpace.sm,
+              WebTokens.gutter,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(left: WebSpace.md, bottom: WebSpace.sm),
+                  child: Text(
+                    'SETTINGS',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.2,
+                      color: WebPalette.muted(isDark),
+                    ),
+                  ),
+                ),
+                for (var i = 0; i < _webSections.length; i++)
+                  _webNavItem(isDark, i),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Scrollbar(
+              controller: _webScroll,
+              child: SingleChildScrollView(
+                controller: _webScroll,
+                padding: const EdgeInsets.fromLTRB(
+                  WebSpace.sm,
+                  WebTokens.gutter,
+                  WebTokens.gutter,
+                  WebSpace.xxl * 2,
+                ),
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 960),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildWebIdentityCard(isDark),
+                        for (var i = 0; i < sections.length; i++) ...[
+                          const SizedBox(height: WebSpace.xl),
+                          KeyedSubtree(key: _webSectionKeys[i], child: sections[i]),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _webNavItem(bool isDark, int i) {
+    final (icon, label, hint) = _webSections[i];
+    final selected = _webActiveSection == i;
+    final accent = WebPalette.accent(isDark);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Material(
+        color: selected ? accent.withValues(alpha: 0.08) : Colors.transparent,
+        borderRadius: BorderRadius.circular(WebSpace.radiusSm),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(WebSpace.radiusSm),
+          onTap: () => _scrollToWebSection(i),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: WebSpace.md, vertical: 10),
+            child: Row(
+              children: [
+                Icon(icon, size: 18, color: selected ? accent : WebPalette.muted(isDark)),
+                const SizedBox(width: WebSpace.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        style: GoogleFonts.inter(
+                          fontSize: 13.5,
+                          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                          color: selected ? WebPalette.text(isDark) : WebPalette.muted(isDark),
+                        ),
+                      ),
+                      Text(
+                        hint,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(fontSize: 11.5, color: WebPalette.muted(isDark)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Company identity summary at the top of the settings page.
+  Widget _buildWebIdentityCard(bool isDark) {
+    final name = _nameController.text.trim();
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+    final accent = WebPalette.accent(isDark);
+    final location = [_selectedDistrict, _selectedState, _selectedCountry]
+        .whereType<String>()
+        .where((e) => e.isNotEmpty)
+        .join(', ');
+
+    Widget meta(IconData icon, String text) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 15, color: WebPalette.muted(isDark)),
+        const SizedBox(width: 6),
+        Text(text, style: GoogleFonts.inter(fontSize: 13, color: WebPalette.muted(isDark))),
+      ],
+    );
+
+    return WebCard(
+      padding: const EdgeInsets.all(WebSpace.xl),
+      child: Row(
+        children: [
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [AppColors.primaryAmber, AppColors.primaryOrange],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              initial,
+              style: GoogleFonts.inter(fontSize: 30, fontWeight: FontWeight.w800, color: Colors.white),
+            ),
+          ),
+          const SizedBox(width: WebSpace.xl - 4),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        name.isEmpty ? 'Your company' : name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.4,
+                          color: WebPalette.text(isDark),
+                        ),
+                      ),
+                    ),
+                    if (_codeController.text.isNotEmpty) ...[
+                      const SizedBox(width: WebSpace.sm),
+                      WebStatusPill(label: _codeController.text, color: accent, icon: Icons.tag_rounded),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: WebSpace.sm),
+                Wrap(
+                  spacing: WebSpace.lg,
+                  runSpacing: WebSpace.xs,
+                  children: [
+                    if (_emailController.text.isNotEmpty) meta(Icons.mail_outline_rounded, _emailController.text),
+                    if (_phoneController.text.isNotEmpty) meta(Icons.phone_outlined, _phoneController.text),
+                    if (location.isNotEmpty) meta(Icons.place_outlined, location),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: WebSpace.lg),
+          Wrap(
+            spacing: WebSpace.sm,
+            runSpacing: WebSpace.sm,
+            children: [
+              WebStatusPill(
+                label: _hasGst ? 'GST enabled' : 'GST off',
+                color: _hasGst ? AppColors.tableFree : WebPalette.muted(isDark),
+                icon: _hasGst ? Icons.verified_rounded : Icons.remove_circle_outline_rounded,
+              ),
+              if (_hasTableManagement)
+                WebStatusPill(label: 'Tables', color: AppColors.info, icon: Icons.table_restaurant_rounded),
+              if (_hasItemVariants)
+                WebStatusPill(label: 'Variants', color: AppColors.accentTeal, icon: Icons.layers_rounded),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -914,6 +1194,16 @@ class _SectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (WebLayout.enabled && context.isWideWindow) {
+      return WebCard(
+        title: title,
+        icon: icon,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: children,
+        ),
+      );
+    }
     return Container(
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkSurface : Colors.white,

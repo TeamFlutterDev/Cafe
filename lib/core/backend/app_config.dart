@@ -10,7 +10,7 @@ class AppConfig {
 
   static const bool useSupabase = bool.fromEnvironment(
     'USE_SUPABASE',
-    defaultValue: true,
+    defaultValue: false,
   );
 
   static const String apiBaseUrl = String.fromEnvironment('API_BASE_URL');

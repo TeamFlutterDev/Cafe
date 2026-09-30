@@ -5,6 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'core/theme/app_colors.dart';
 import 'core/constants/app_constants.dart';
+import 'core/widgets/breadcrumbs.dart';
+import 'core/widgets/web_layout.dart';
+import 'core/widgets/web_sidebar.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'core/widgets/window_class.dart';
 import 'models/models.dart';
 import 'providers/providers.dart';
@@ -26,6 +30,16 @@ import 'features/admin/presentation/stock/stock_dashboard_screen.dart';
 /// `/` route once `AppRouter`'s redirect confirms a non-owner, authenticated
 /// user. Login/owner-dashboard routing now lives in
 /// `core/routing/app_router.dart`, not here.
+///
+/// Two presentations:
+/// * **Native** — drawer (or permanent panel on wide tablets); the modules
+///   swap in the body and every other page is `Navigator.push`ed full-screen
+///   with its own AppBar back button. Unchanged from before.
+/// * **Web** ([WebLayout.enabled]) — a flat sidebar, a top bar with the
+///   breadcrumb trail, and a nested content [Navigator]: every destination
+///   (modules *and* admin pages) opens inside it, so the sidebar never
+///   disappears, and anything a page pushes from there (e.g. Item Group →
+///   Variants) lands in it too and shows up in the breadcrumbs.
 class AuthenticatedShell extends ConsumerStatefulWidget {
   final UserProfile user;
   const AuthenticatedShell({super.key, required this.user});
@@ -40,6 +54,23 @@ class AuthenticatedShellState extends ConsumerState<AuthenticatedShell>
   int _selectedNavIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
+  // ─── Web shell state ───
+  final GlobalKey<NavigatorState> _webNavKey = GlobalKey<NavigatorState>();
+  final BreadcrumbController _crumbs = BreadcrumbController();
+
+  /// The destination open in the web content navigator (`_NavPage.id`, or a
+  /// module's id). Null = the first module.
+  String? _webDestId;
+
+  /// Id of the destination the last web build actually showed (resolves the
+  /// null / fallen-back cases of [_webDestId]).
+  String? _openWebId;
+
+  /// Web, wide windows: sidebar collapsed to an icon rail. Toggled by the
+  /// header button / edge ‹ › button; remembered across sessions.
+  bool _sidebarCollapsed = false;
+  static const _sidebarPrefKey = 'web_sidebar_collapsed';
+
   // Periodically re-validates the session against the server so a deactivated /
   // force-logged-out / another-device login kicks this device to login quickly.
   Timer? _sessionTimer;
@@ -52,6 +83,7 @@ class AuthenticatedShellState extends ConsumerState<AuthenticatedShell>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (WebLayout.enabled) _restoreSidebarState();
     // Check once right away, then on an interval.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(authStateProvider.notifier).validateSession();
@@ -62,9 +94,29 @@ class AuthenticatedShellState extends ConsumerState<AuthenticatedShell>
     );
   }
 
+  Future<void> _restoreSidebarState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final collapsed = prefs.getBool(_sidebarPrefKey) ?? false;
+      if (mounted && collapsed != _sidebarCollapsed) {
+        setState(() => _sidebarCollapsed = collapsed);
+      }
+    } catch (_) {
+      // Storage blocked (private mode etc.) — just start expanded.
+    }
+  }
+
+  void _toggleSidebar() {
+    setState(() => _sidebarCollapsed = !_sidebarCollapsed);
+    SharedPreferences.getInstance()
+        .then((prefs) => prefs.setBool(_sidebarPrefKey, _sidebarCollapsed))
+        .catchError((Object _) => true);
+  }
+
   @override
   void dispose() {
     _sessionTimer?.cancel();
+    _crumbs.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -93,20 +145,35 @@ class AuthenticatedShellState extends ConsumerState<AuthenticatedShell>
             : UserPermission.forRole(user.id, user.role));
 
     final isWide = context.isWideWindow;
+    final pages = _pagesFor(perms);
 
     // Kitchen role: dedicated full-screen KOT display.
     if (_isKitchen) {
+      if (WebLayout.enabled) {
+        return _buildWebShell(
+          context,
+          isDark,
+          [
+            _NavModule(
+              Icons.restaurant_rounded,
+              'Kitchen Display',
+              KitchenScreen(companyId: user.companyId),
+            ),
+          ],
+          pages,
+        );
+      }
       return Scaffold(
         key: _scaffoldKey,
         drawer: isWide
             ? null
-            : _buildNavPanel(context, isDark, perms, const [], isPermanent: false),
+            : _buildNavPanel(context, isDark, const [], pages, isPermanent: false),
         body: isWide
             ? Row(
                 children: [
                   SizedBox(
                     width: 300,
-                    child: _buildNavPanel(context, isDark, perms, const [], isPermanent: true),
+                    child: _buildNavPanel(context, isDark, const [], pages, isPermanent: true),
                   ),
                   Expanded(child: KitchenScreen(companyId: user.companyId)),
                 ],
@@ -163,19 +230,23 @@ class AuthenticatedShellState extends ConsumerState<AuthenticatedShell>
       }
     }
 
+    if (WebLayout.enabled) {
+      return _buildWebShell(context, isDark, modules, pages);
+    }
+
     final safeIndex = _selectedNavIndex.clamp(0, modules.length - 1);
 
     return Scaffold(
       key: _scaffoldKey,
       drawer: isWide
           ? null
-          : _buildNavPanel(context, isDark, perms, modules, isPermanent: false),
+          : _buildNavPanel(context, isDark, modules, pages, isPermanent: false),
       body: isWide
           ? Row(
               children: [
                 SizedBox(
                   width: 300,
-                  child: _buildNavPanel(context, isDark, perms, modules, isPermanent: true),
+                  child: _buildNavPanel(context, isDark, modules, pages, isPermanent: true),
                 ),
                 Expanded(child: modules[safeIndex].screen),
               ],
@@ -184,24 +255,438 @@ class AuthenticatedShellState extends ConsumerState<AuthenticatedShell>
     );
   }
 
-  /// Whether any back-office master destination is visible for these
-  /// permissions.
-  bool _canSeeAdminSection(UserPermission p) =>
-      p.canManageSettings ||
-      p.canManageUsers ||
-      p.canManageItems ||
-      p.canManageStock ||
-      p.canManageTables;
+  // ─── Destinations ────────────────────────────────────────────────────────
+
+  static const _sectionAdmin = 'Admin Masters';
+  static const _sectionAccount = 'Account';
+
+  /// Every non-module destination the nav offers these permissions, in nav
+  /// order. Gating mirrors the old hand-written drawer exactly: the kitchen
+  /// role only ever gets My Profile.
+  List<_NavPage> _pagesFor(UserPermission perms) {
+    final profile = _NavPage(
+      id: 'profile',
+      icon: Icons.person_outline_rounded,
+      label: 'My Profile',
+      section: _sectionAccount,
+      closeFirst: true,
+      builder: () => MyProfileScreen(user: widget.user),
+    );
+    if (_isKitchen) return [profile];
+
+    return [
+      if (perms.canManageTables)
+        _NavPage(
+          id: 'kitchen',
+          icon: Icons.soup_kitchen_rounded,
+          label: 'Kitchen Monitor',
+          closeFirst: true,
+          builder: () => KitchenScreen(companyId: widget.user.companyId),
+        ),
+      if (perms.canManageSettings)
+        _NavPage(
+          id: 'company',
+          icon: Icons.business_rounded,
+          label: 'Company Master',
+          section: _sectionAdmin,
+          builder: () => const CompanyMasterScreen(),
+        ),
+      if (perms.canManageTables)
+        _NavPage(
+          id: 'tables-master',
+          icon: Icons.table_restaurant_rounded,
+          label: 'Table Master',
+          section: _sectionAdmin,
+          builder: () => const TableMasterScreen(),
+        ),
+      if (perms.canManageUsers)
+        _NavPage(
+          id: 'users',
+          icon: Icons.people_alt_rounded,
+          label: 'User Master',
+          section: _sectionAdmin,
+          builder: () => const UserMasterScreen(),
+        ),
+      if (perms.canManageItems)
+        _NavPage(
+          id: 'item-groups',
+          icon: Icons.category_rounded,
+          label: 'Item Group',
+          section: _sectionAdmin,
+          builder: () => const ItemMasterScreen(),
+        ),
+      if (perms.canManageItems)
+        _NavPage(
+          id: 'item-variants',
+          icon: Icons.inventory_2_rounded,
+          label: 'Item Variant',
+          section: _sectionAdmin,
+          builder: () => const ItemVariantScreen(),
+        ),
+      if (perms.canManageStock)
+        _NavPage(
+          id: 'stock',
+          icon: Icons.warehouse_rounded,
+          label: 'Stock & Inventory',
+          section: _sectionAdmin,
+          closeFirst: true,
+          builder: () => const StockSectionScreen(),
+        ),
+      profile,
+    ];
+  }
+
+  // ─── Web shell ───────────────────────────────────────────────────────────
+
+  _NavPage _currentWebDest(List<_NavModule> modules, List<_NavPage> pages) {
+    final all = [for (final m in modules) m.asPage, ...pages];
+    return all.firstWhere(
+      (d) => d.id == _webDestId,
+      // A destination that disappeared (permissions changed) falls back home.
+      orElse: () => all.first,
+    );
+  }
+
+  /// Opens [dest] in the web content navigator. Re-selecting the open
+  /// destination returns to its root page (drops anything pushed on top).
+  void _selectWebDest(_NavPage dest, {required bool isPermanent}) {
+    if (!isPermanent) _scaffoldKey.currentState?.closeDrawer();
+    if (dest.id == _openWebId) {
+      _webNavKey.currentState?.popUntil((r) => r.isFirst);
+    }
+    setState(() => _webDestId = dest.id);
+  }
+
+  Widget _buildWebShell(
+    BuildContext context,
+    bool isDark,
+    List<_NavModule> modules,
+    List<_NavPage> pages,
+  ) {
+    final isWide = context.isWideWindow;
+    final current = _currentWebDest(modules, pages);
+    _openWebId = current.id;
+    final home = modules.first.asPage;
+
+    final leading = <Crumb>[
+      Crumb(
+        'Home',
+        icon: Icons.home_rounded,
+        onTap: () => _selectWebDest(home, isPermanent: true),
+      ),
+      if (current.section != null) Crumb(current.section!),
+    ];
+
+    final sidebarWidth = _sidebarCollapsed
+        ? WebSidebarSize.rail
+        : WebSidebarSize.expanded;
+
+    return Scaffold(
+      key: _scaffoldKey,
+      backgroundColor: isDark ? AppColors.darkBg : AppColors.lightBg,
+      drawer: isWide
+          ? null
+          : Drawer(
+              width: WebSidebarSize.expanded + 16,
+              shape: const RoundedRectangleBorder(),
+              child: _buildWebSidebar(
+                isDark,
+                modules,
+                pages,
+                current.id,
+                inDrawer: true,
+              ),
+            ),
+      body: Stack(
+        children: [
+          Row(
+        children: [
+          if (isWide)
+            AnimatedContainer(
+              duration: WebSidebarSize.animation,
+              curve: Curves.easeOutCubic,
+              width: sidebarWidth,
+              clipBehavior: Clip.hardEdge,
+              decoration: BoxDecoration(
+                border: Border(
+                  right: BorderSide(
+                    color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+                  ),
+                ),
+              ),
+              child: _buildWebSidebar(
+                isDark,
+                modules,
+                pages,
+                current.id,
+                inDrawer: false,
+              ),
+            ),
+          Expanded(
+            child: Column(
+              children: [
+                _buildWebTopBar(isDark, isWide, leading, pages),
+                Expanded(
+                  child: BreadcrumbScope(
+                    controller: _crumbs,
+                    child: ClipRect(
+                      child: Navigator(
+                        key: _webNavKey,
+                        observers: [_crumbs],
+                        pages: [
+                          MaterialPage<void>(
+                            key: ValueKey(current.id),
+                            name: current.label,
+                            child: current.builder(),
+                          ),
+                        ],
+                        onDidRemovePage: (_) {},
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+          // ‹ / › on the sidebar's right border.
+          if (isWide)
+            AnimatedPositioned(
+              duration: WebSidebarSize.animation,
+              curve: Curves.easeOutCubic,
+              left: sidebarWidth - 13,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: WebSidebarEdgeToggle(
+                  collapsed: _sidebarCollapsed,
+                  onPressed: _toggleSidebar,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Web side menu (permanent on wide windows, slide-out [Drawer] on narrow
+  /// ones). Same destinations and gating as the native nav panel.
+  Widget _buildWebSidebar(
+    bool isDark,
+    List<_NavModule> modules,
+    List<_NavPage> pages,
+    String currentId, {
+    required bool inDrawer,
+  }) {
+    WebSideItem item(_NavPage page) => WebSideItem(
+      icon: page.icon,
+      label: page.label,
+      selected: currentId == page.id,
+      onTap: () => _selectWebDest(page, isPermanent: !inDrawer),
+    );
+
+    final entries = <WebSideEntry>[
+      WebSideSection(_isKitchen ? 'Kitchen' : 'Navigation'),
+      for (final m in modules) item(m.asPage),
+      for (final p in pages.where((p) => p.section == null)) item(p),
+      if (pages.any((p) => p.section == _sectionAdmin)) ...[
+        const WebSideSection(_sectionAdmin),
+        for (final p in pages.where((p) => p.section == _sectionAdmin)) item(p),
+      ],
+      if (pages.any((p) => p.section == _sectionAccount)) ...[
+        const WebSideSection(_sectionAccount),
+        for (final p in pages.where((p) => p.section == _sectionAccount)) item(p),
+      ],
+    ];
+
+    final company = ref.watch(companyProvider(widget.user.companyId)).value;
+
+    return WebSidebar(
+      title: 'Rasabhojan',
+      subtitle: company?.companyName ?? 'POS Console',
+      entries: entries,
+      onLogout: () => ref.read(authStateProvider.notifier).signOut(),
+      toggleIcon: inDrawer ? Icons.close_rounded : Icons.menu_open_rounded,
+      toggleTooltip: inDrawer
+          ? 'Close menu'
+          : (_sidebarCollapsed ? 'Expand menu' : 'Collapse menu'),
+      onToggle: inDrawer
+          ? () => _scaffoldKey.currentState?.closeDrawer()
+          : _toggleSidebar,
+    );
+  }
+
+  Widget _buildWebTopBar(
+    bool isDark,
+    bool isWide,
+    List<Crumb> leading,
+    List<_NavPage> pages,
+  ) {
+    final border = isDark ? AppColors.darkBorder : AppColors.lightBorder;
+    final fg = isDark ? AppColors.textWhite : AppColors.textDark;
+
+    return Material(
+      color: isDark ? AppColors.darkSurface : AppColors.lightSurface,
+      child: Container(
+        height: WebTokens.topBarHeight,
+        padding: EdgeInsets.only(
+          left: isWide ? WebTokens.gutter : WebTokens.gap,
+          right: WebTokens.gap * 2,
+        ),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: border)),
+        ),
+        child: Row(
+          children: [
+            // Narrow windows: opens the slide-out menu. (Wide windows
+            // collapse/expand the sidebar from the sidebar itself.)
+            if (!isWide)
+              IconButton(
+                icon: Icon(Icons.menu_rounded, color: fg),
+                tooltip: 'Menu',
+                onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+              ),
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: ListenableBuilder(
+                  listenable: _crumbs,
+                  builder: (context, _) =>
+                      Breadcrumbs(crumbs: _crumbs.trail(leading: leading)),
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: isDark ? 'Light mode' : 'Dark mode',
+              icon: Icon(
+                isDark ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
+                color: fg,
+              ),
+              onPressed: () => ref.read(isDarkModeProvider.notifier).toggle(),
+            ),
+            const SizedBox(width: WebTokens.gap / 2),
+            _buildWebUserMenu(isDark, isWide, pages),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebUserMenu(bool isDark, bool isWide, List<_NavPage> pages) {
+    final user = widget.user;
+    final profile = pages.where((p) => p.id == 'profile').firstOrNull;
+    final initials = user.fullName.isNotEmpty
+        ? user.fullName
+              .split(' ')
+              .take(2)
+              .map((w) => w.isNotEmpty ? w[0] : '')
+              .join()
+              .toUpperCase()
+        : '?';
+
+    return PopupMenuButton<String>(
+      tooltip: 'Account',
+      position: PopupMenuPosition.under,
+      onSelected: (value) {
+        if (value == 'profile' && profile != null) {
+          _selectWebDest(profile, isPermanent: true);
+        } else if (value == 'logout') {
+          ref.read(authStateProvider.notifier).signOut();
+        }
+      },
+      itemBuilder: (_) => [
+        if (profile != null)
+          const PopupMenuItem(
+            value: 'profile',
+            child: ListTile(
+              leading: Icon(Icons.person_outline_rounded),
+              title: Text('My Profile'),
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+        const PopupMenuItem(
+          value: 'logout',
+          child: ListTile(
+            leading: Icon(Icons.logout_rounded, color: AppColors.error),
+            title: Text('Logout', style: TextStyle(color: AppColors.error)),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: WebTokens.gap,
+          vertical: WebTokens.gap / 2,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 32,
+              height: 32,
+              child: ClipOval(
+                child: user.avatarUrl != null && user.avatarUrl!.isNotEmpty
+                    ? Image.network(
+                        user.avatarUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => _initialsAvatar(initials),
+                      )
+                    : _initialsAvatar(initials),
+              ),
+            ),
+            if (isWide) ...[
+              const SizedBox(width: WebTokens.gap),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    user.fullName,
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: isDark ? AppColors.textWhite : AppColors.textDark,
+                    ),
+                  ),
+                  Text(
+                    user.role.toUpperCase(),
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primaryOrange,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: WebTokens.gap / 2),
+              Icon(
+                Icons.expand_more_rounded,
+                size: 18,
+                color: isDark
+                    ? AppColors.textWhiteMuted
+                    : AppColors.textDarkMuted,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── Nav panel (drawer / sidebar) ────────────────────────────────────────
 
   /// Renders the app's navigation as either a slide-out [Drawer] (phones —
   /// [isPermanent] false) or a permanently visible side panel next to the
   /// body (desktop/web — [isPermanent] true). Both share one content tree so
   /// the nav never drifts between the two layouts.
+  ///
   Widget _buildNavPanel(
     BuildContext context,
     bool isDark,
-    UserPermission perms,
-    List<_NavModule> modules, {
+    List<_NavModule> modules,
+    List<_NavPage> pages, {
     required bool isPermanent,
   }) {
     final mediaQuery = MediaQuery.of(context);
@@ -213,6 +698,80 @@ class AuthenticatedShellState extends ConsumerState<AuthenticatedShell>
     void close() {
       if (!isPermanent) Navigator.pop(context);
     }
+
+    void openPage(_NavPage page) {
+      if (page.closeFirst) close();
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          settings: RouteSettings(name: page.label),
+          builder: (_) => page.builder(),
+        ),
+      );
+    }
+
+    Widget pageItem(_NavPage page) => _buildDrawerItem(
+      page.icon,
+      page.label,
+      () => openPage(page),
+      isDark,
+    );
+
+    final navPages = pages.where((p) => p.section == null);
+    final adminPages = pages.where((p) => p.section == _sectionAdmin);
+    final accountPages = pages.where((p) => p.section == _sectionAccount);
+
+    final items = <Widget>[
+      if (_isKitchen) ...[
+        _buildDrawerSection('KITCHEN', isDark),
+        _buildDrawerItem(
+          Icons.restaurant_rounded,
+          'Kitchen Display',
+          close,
+          isDark,
+          isSelected: true,
+        ),
+      ] else ...[
+        _buildDrawerSection('NAVIGATION', isDark),
+        ...modules.asMap().entries.map(
+          (e) => _buildDrawerItem(
+            e.value.icon,
+            e.value.label,
+            () {
+              setState(() => _selectedNavIndex = e.key);
+              close();
+            },
+            isDark,
+            isSelected: _selectedNavIndex == e.key,
+          ),
+        ),
+        ...navPages.map(pageItem),
+        if (adminPages.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _buildDrawerSection('ADMIN MASTERS', isDark),
+          ...adminPages.map(pageItem),
+        ],
+      ],
+      const SizedBox(height: 12),
+      _buildDrawerSection('ACCOUNT', isDark),
+      ...accountPages.map(pageItem),
+      _buildDrawerItem(
+        Icons.logout_rounded,
+        'Logout',
+        () => ref.read(authStateProvider.notifier).signOut(),
+        isDark,
+        isError: true,
+      ),
+    ];
+
+    final list = ListView(
+      physics: const BouncingScrollPhysics(),
+      padding: EdgeInsets.only(
+        top: 8,
+        bottom: MediaQuery.of(context).padding.bottom + 24,
+      ),
+      children: items,
+    );
 
     final content = SafeArea(
         child: Container(
@@ -260,169 +819,7 @@ class AuthenticatedShellState extends ConsumerState<AuthenticatedShell>
                   child: Column(
                     children: [
                       _buildDrawerUserHeader(isDark),
-                      Expanded(
-                        child: ListView(
-                          physics: const BouncingScrollPhysics(),
-                          padding: EdgeInsets.only(
-                            top: 8,
-                            bottom: MediaQuery.of(context).padding.bottom + 24,
-                          ),
-                          children: [
-                            if (_isKitchen) ...[
-                              _buildDrawerSection('KITCHEN', isDark),
-                              _buildDrawerItem(
-                                Icons.restaurant_rounded,
-                                'Kitchen Display',
-                                close,
-                                isDark,
-                                isSelected: true,
-                              ),
-                            ] else ...[
-                              _buildDrawerSection('NAVIGATION', isDark),
-                              ...modules.asMap().entries.map(
-                                (e) => _buildDrawerItem(
-                                  e.value.icon,
-                                  e.value.label,
-                                  () {
-                                    setState(() => _selectedNavIndex = e.key);
-                                    close();
-                                  },
-                                  isDark,
-                                  isSelected: _selectedNavIndex == e.key,
-                                ),
-                              ),
-                              if (perms.canManageTables)
-                                _buildDrawerItem(
-                                  Icons.soup_kitchen_rounded,
-                                  'Kitchen Monitor',
-                                  () {
-                                    close();
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => KitchenScreen(
-                                          companyId: widget.user.companyId,
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                  isDark,
-                                ),
-                              if (_canSeeAdminSection(perms)) ...[
-                                const SizedBox(height: 12),
-                                _buildDrawerSection('ADMIN MASTERS', isDark),
-                                if (perms.canManageSettings)
-                                  _buildDrawerItem(
-                                    Icons.business_rounded,
-                                    'Company Master',
-                                    () => Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) =>
-                                            const CompanyMasterScreen(),
-                                      ),
-                                    ),
-                                    isDark,
-                                  ),
-                                if (perms.canManageTables)
-                                  _buildDrawerItem(
-                                    Icons.table_restaurant_rounded,
-                                    'Table Master',
-                                    () => Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) =>
-                                            const TableMasterScreen(),
-                                      ),
-                                    ),
-                                    isDark,
-                                  ),
-                                if (perms.canManageUsers)
-                                  _buildDrawerItem(
-                                    Icons.people_alt_rounded,
-                                    'User Master',
-                                    () => Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) =>
-                                            const UserMasterScreen(),
-                                      ),
-                                    ),
-                                    isDark,
-                                  ),
-                                if (perms.canManageItems)
-                                  _buildDrawerItem(
-                                    Icons.category_rounded,
-                                    'Item Group',
-                                    () => Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) =>
-                                            const ItemMasterScreen(),
-                                      ),
-                                    ),
-                                    isDark,
-                                  ),
-                                if (perms.canManageItems)
-                                  _buildDrawerItem(
-                                    Icons.inventory_2_rounded,
-                                    'Item Variant',
-                                    () => Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) =>
-                                            const ItemVariantScreen(),
-                                      ),
-                                    ),
-                                    isDark,
-                                  ),
-                                if (perms.canManageStock)
-                                  _buildDrawerItem(
-                                    Icons.warehouse_rounded,
-                                    'Stock & Inventory',
-                                    () {
-                                      close();
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (_) =>
-                                              const StockSectionScreen(),
-                                        ),
-                                      );
-                                    },
-                                    isDark,
-                                  ),
-                              ],
-                            ],
-                            const SizedBox(height: 12),
-                            _buildDrawerSection('ACCOUNT', isDark),
-                            _buildDrawerItem(
-                              Icons.person_outline_rounded,
-                              'My Profile',
-                              () {
-                                close();
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        MyProfileScreen(user: widget.user),
-                                  ),
-                                );
-                              },
-                              isDark,
-                            ),
-                            _buildDrawerItem(
-                              Icons.logout_rounded,
-                              'Logout',
-                              () => ref
-                                  .read(authStateProvider.notifier)
-                                  .signOut(),
-                              isDark,
-                              isError: true,
-                            ),
-                          ],
-                        ),
-                      ),
+                      Expanded(child: list),
                     ],
                   ),
                 ),
@@ -740,4 +1137,35 @@ class _NavModule {
   final String label;
   final Widget screen;
   const _NavModule(this.icon, this.label, this.screen);
+
+  /// This module as a web-shell destination (labels are unique per shell).
+  _NavPage get asPage => _NavPage(
+    id: 'module:$label',
+    icon: icon,
+    label: label,
+    builder: () => screen,
+  );
+}
+
+/// A non-module nav destination (admin masters, Kitchen Monitor, profile).
+/// Native builds push [builder] full-screen; the web shell opens it in its
+/// content navigator. [section] is the breadcrumb/grouping label (null =
+/// main navigation); [closeFirst] preserves which native drawer items closed
+/// the drawer before pushing.
+class _NavPage {
+  final String id;
+  final IconData icon;
+  final String label;
+  final String? section;
+  final bool closeFirst;
+  final Widget Function() builder;
+
+  const _NavPage({
+    required this.id,
+    required this.icon,
+    required this.label,
+    required this.builder,
+    this.section,
+    this.closeFirst = false,
+  });
 }

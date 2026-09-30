@@ -6,9 +6,12 @@ import 'package:uuid/uuid.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/backend/backend.dart';
 import '../../../../core/utils/api_helper.dart';
+import '../../../../core/widgets/adaptive_app_bar.dart';
+import '../../../../core/widgets/web_layout.dart';
 import '../../../../models/inventory_models.dart';
 import '../../../../providers/providers.dart';
 import '../../../../providers/inventory_providers.dart';
+import 'stock_common.dart';
 
 /// Raw materials list + add/edit. Mirrors the Item Group admin screen:
 /// gradient app bar, card list, FAB, and a soft-delete flow. Add/edit uses a
@@ -108,17 +111,29 @@ class _RawMaterialScreenState extends ConsumerState<RawMaterialScreen> {
 
     return Scaffold(
       backgroundColor: isDark ? AppColors.darkBg : AppColors.lightBg,
-      appBar: _gradientAppBar('Raw Materials'),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openEditor(companyId),
-        backgroundColor: AppColors.primaryOrange,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.add_rounded),
-        label: Text(
-          'Add Material',
-          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
-        ),
+      appBar: stockGradientAppBar(
+        'Raw Materials',
+        webActions: [
+          WebHeaderButton(
+            icon: Icons.add_rounded,
+            label: 'Add Material',
+            onPressed: () => _openEditor(companyId),
+          ),
+        ],
       ),
+      // Web puts "Add Material" in the page header instead.
+      floatingActionButton: WebLayout.enabled
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: () => _openEditor(companyId),
+              backgroundColor: AppColors.primaryOrange,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.add_rounded),
+              label: Text(
+                'Add Material',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+              ),
+            ),
       body: materialsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => _ErrorState(
@@ -534,24 +549,6 @@ class _RawMaterialEditorSheetState
 }
 
 // ─── SHARED SMALL WIDGETS ────────────────────────────────
-PreferredSizeWidget _gradientAppBar(String title) => AppBar(
-  title: Text(
-    title,
-    style: GoogleFonts.inter(fontWeight: FontWeight.w800, color: Colors.white),
-  ),
-  centerTitle: true,
-  elevation: 0,
-  iconTheme: const IconThemeData(color: Colors.white),
-  flexibleSpace: Container(
-    decoration: const BoxDecoration(
-      gradient: LinearGradient(
-        colors: [AppColors.primaryAmber, AppColors.primaryOrange],
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-      ),
-    ),
-  ),
-);
 
 class _EmptyState extends StatelessWidget {
   const _EmptyState({required this.onAdd});

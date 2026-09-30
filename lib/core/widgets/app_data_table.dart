@@ -10,6 +10,8 @@ import 'package:data_table_2/data_table_2.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_colors.dart';
+import 'web_kit.dart';
+import 'web_layout.dart';
 import 'window_class.dart';
 
 export 'package:data_table_2/data_table_2.dart' show ColumnSize;
@@ -122,11 +124,17 @@ class _AppDataTableState<T> extends State<AppDataTable<T>> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final borderColor = isDark ? AppColors.darkBorder : AppColors.lightBorder;
-    final headerBg = isDark ? AppColors.darkElevated : AppColors.lightElevated;
+    final web = WebLayout.enabled;
+    final borderColor = web
+        ? WebPalette.border(isDark)
+        : (isDark ? AppColors.darkBorder : AppColors.lightBorder);
+    final headerBg = web
+        ? WebPalette.subtle(isDark)
+        : (isDark ? AppColors.darkElevated : AppColors.lightElevated);
     final compact = MediaQuery.sizeOf(context).width < widget.compactBelow;
     final cols = _visibleColumns(context);
     final rows = _processed(cols);
+    if (web && !compact) return _buildWeb(context, isDark, cols, rows, borderColor, headerBg);
 
     final header = Wrap(
       spacing: 12,
@@ -264,6 +272,161 @@ class _AppDataTableState<T> extends State<AppDataTable<T>> {
           mainAxisSize: MainAxisSize.min,
           children: [header, const SizedBox(height: 12), body],
         ),
+      ),
+    );
+  }
+
+  /// Web presentation: header row (title · count · search · toolbar), then
+  /// the table edge-to-edge inside the card, sized to its rows.
+  Widget _buildWeb(
+    BuildContext context,
+    bool isDark,
+    List<AppColumn<T>> cols,
+    List<T> rows,
+    Color borderColor,
+    Color headerBg,
+  ) {
+    final muted = WebPalette.muted(isDark);
+    final header = Padding(
+      padding: const EdgeInsets.fromLTRB(20, 14, 16, 14),
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 10,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        alignment: WrapAlignment.spaceBetween,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.title != null) ...[
+                Text(
+                  widget.title!,
+                  style: GoogleFonts.inter(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: WebPalette.text(isDark),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: headerBg,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: borderColor),
+                ),
+                child: Text(
+                  rows.length == widget.rows.length
+                      ? '${rows.length} records'
+                      : '${rows.length} of ${widget.rows.length}',
+                  style: GoogleFonts.inter(fontSize: 11.5, fontWeight: FontWeight.w600, color: muted),
+                ),
+              ),
+            ],
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              WebSearchField(
+                controller: _search,
+                onChanged: (_) => setState(() {}),
+                width: 260,
+              ),
+              for (final t in widget.toolbar) ...[const SizedBox(width: 8), t],
+            ],
+          ),
+        ],
+      ),
+    );
+
+    Widget body;
+    if (widget.loading) {
+      body = const Padding(
+        padding: EdgeInsets.symmetric(vertical: 64),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    } else if (rows.isEmpty) {
+      body = WebEmptyState(
+        icon: _search.text.isEmpty ? Icons.inbox_outlined : Icons.search_off_rounded,
+        title: _search.text.isEmpty ? widget.emptyMessage : 'No matches',
+        message: _search.text.isEmpty ? null : 'Nothing matches "${_search.text}".',
+      );
+    } else {
+      _source.update(rows, cols, widget.onRowTap, widget.actions);
+      const rowH = 52.0;
+      final visible = rows.length < _rowsPerPage ? rows.length : _rowsPerPage;
+      body = SizedBox(
+        height: visible * rowH + 46 + 58,
+        child: Theme(
+          data: Theme.of(context).copyWith(
+            cardTheme: const CardThemeData(elevation: 0, margin: EdgeInsets.zero),
+            dividerColor: borderColor,
+          ),
+          child: PaginatedDataTable2(
+            source: _source,
+            minWidth: 720,
+            wrapInCard: false,
+            rowsPerPage: _rowsPerPage,
+            availableRowsPerPage: const [10, 25, 50, 100],
+            onRowsPerPageChanged: (v) => setState(() => _rowsPerPage = v ?? 10),
+            sortColumnIndex: _sortCol,
+            sortAscending: _asc,
+            sortArrowIcon: Icons.arrow_upward_rounded,
+            headingRowHeight: 46,
+            dataRowHeight: rowH,
+            horizontalMargin: 20,
+            columnSpacing: 16,
+            showCheckboxColumn: false,
+            renderEmptyRowsInTheEnd: false,
+            headingRowColor: WidgetStatePropertyAll(headerBg),
+            headingTextStyle: GoogleFonts.inter(
+              fontWeight: FontWeight.w700,
+              fontSize: 11.5,
+              letterSpacing: 0.4,
+              color: muted,
+            ),
+            dataTextStyle: GoogleFonts.inter(
+              fontSize: 13.5,
+              color: WebPalette.text(isDark),
+            ),
+            border: TableBorder(
+              top: BorderSide(color: borderColor),
+              bottom: BorderSide(color: borderColor),
+              horizontalInside: BorderSide(color: borderColor, width: 0.7),
+            ),
+            columns: [
+              for (var i = 0; i < cols.length; i++)
+                DataColumn2(
+                  label: Text(cols[i].label.toUpperCase()),
+                  size: cols[i].size,
+                  numeric: cols[i].numeric,
+                  onSort: cols[i].sortable
+                      ? (idx, asc) => setState(() {
+                          _sortCol = idx;
+                          _asc = asc;
+                        })
+                      : null,
+                ),
+              if (widget.actions.isNotEmpty)
+                const DataColumn2(label: SizedBox.shrink(), fixedWidth: 56),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: WebPalette.surface(isDark),
+        borderRadius: BorderRadius.circular(WebSpace.radius),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [header, body],
       ),
     );
   }

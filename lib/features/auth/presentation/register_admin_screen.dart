@@ -3,6 +3,8 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:uuid/uuid.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/widgets/breadcrumbs.dart';
+import '../../../core/widgets/web_layout.dart';
 import '../../../core/backend/backend.dart';
 import '../../../core/utils/api_helper.dart';
 import '../../../models/models.dart';
@@ -141,6 +143,23 @@ class _RegisterAdminScreenState extends State<RegisterAdminScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // "Register company" isn't clickable: the company is already
+          // verified, re-opening its form would only start a duplicate.
+          if (WebLayout.enabled) ...[
+            Breadcrumbs(
+              crumbs: [
+                Crumb(
+                  'Sign in',
+                  icon: Icons.login_rounded,
+                  onTap: () =>
+                      Navigator.of(context).popUntil((route) => route.isFirst),
+                ),
+                const Crumb('Register company'),
+                const Crumb('Create admin'),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
           Text(
             'Create admin account',
             style: GoogleFonts.outfit(
