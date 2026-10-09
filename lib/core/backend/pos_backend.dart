@@ -39,6 +39,12 @@ abstract interface class PosBackend {
     required String newPassword,
   });
 
+  // ─── ROLES ─────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> getRoles(String companyId);
+  Future<Map<String, dynamic>?> getRoleByName(String companyId, String roleName);
+  Future<void> upsertRole(Map<String, dynamic> data);
+  Future<void> deleteRole(String roleId);
+
   // ─── USERS ─────────────────────────────────────────────
   Future<List<Map<String, dynamic>>> getUsersForCompany(String companyId);
 

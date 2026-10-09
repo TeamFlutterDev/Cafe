@@ -25,6 +25,7 @@ import 'features/admin/presentation/table_master_screen.dart';
 import 'features/kitchen/kitchen_screen.dart';
 import 'features/admin/presentation/my_profile_screen.dart';
 import 'features/admin/presentation/stock/stock_dashboard_screen.dart';
+import 'features/admin/presentation/role_master_screen.dart';
 
 /// The signed-in app shell (POS/Tables/Bills + admin nav) — rendered by the
 /// `/` route once `AppRouter`'s redirect confirms a non-owner, authenticated
@@ -76,8 +77,10 @@ class AuthenticatedShellState extends ConsumerState<AuthenticatedShell>
   Timer? _sessionTimer;
   static const _sessionCheckInterval = Duration(seconds: 20);
 
+  // Covers both 'waiter' (legacy) and 'staff' with only table access.
   bool get _isWaiter => widget.user.isWaiter;
-  bool get _isKitchen => widget.user.isKitchen;
+  // Covers both 'kitchen' (legacy) and 'kitchen_master'.
+  bool get _isKitchen => widget.user.isKitchenMaster;
 
   @override
   void initState() {
@@ -306,6 +309,14 @@ class AuthenticatedShellState extends ConsumerState<AuthenticatedShell>
           label: 'User Master',
           section: _sectionAdmin,
           builder: () => const UserMasterScreen(),
+        ),
+      if (perms.canManageRoles)
+        _NavPage(
+          id: 'roles',
+          icon: Icons.shield_rounded,
+          label: 'Role Master',
+          section: _sectionAdmin,
+          builder: () => RoleMasterScreen(companyId: widget.user.companyId),
         ),
       if (perms.canManageItems)
         _NavPage(

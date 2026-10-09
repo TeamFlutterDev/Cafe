@@ -8,21 +8,26 @@ import '../../../core/widgets/web_layout.dart';
 import '../../../core/backend/backend.dart';
 import '../../../core/utils/api_helper.dart';
 import 'login_screen.dart' show AmbientBackground, ScaleButton;
-import 'register_admin_screen.dart';
 
-/// Step 2: the prospect enters the 6-digit OTP that the owner/super-admin
-/// received via push. On success the company is activated and we move on to
-/// creating the first admin user.
+/// Step 2: OTP verification.
+/// On success, automatically creates the first admin account using [adminData]
+/// (collected on the previous screen) and navigates straight to the login screen.
 class RegistrationOtpScreen extends StatefulWidget {
   final String registrationId;
   final String companyId;
   final String companyName;
+  /// Admin email — shown in the subtitle so the user knows where the OTP went.
+  final String adminEmail;
+  /// Admin user data collected on the registration screen.
+  final Map<String, dynamic> adminData;
 
   const RegistrationOtpScreen({
     super.key,
     required this.registrationId,
     required this.companyId,
     required this.companyName,
+    required this.adminEmail,
+    required this.adminData,
   });
 
   @override
@@ -47,21 +52,13 @@ class _RegistrationOtpScreenState extends State<RegistrationOtpScreen> {
     }
     setState(() => _isLoading = true);
     try {
+      // Step 1 — verify OTP (also stores registration token in rest_backend).
       final res = await Backend.verifyCompanyRegistrationOtp(
         registrationId: widget.registrationId,
         code: code,
       );
-      if (res['ok'] == true) {
-        if (!mounted) return;
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => RegisterAdminScreen(
-              companyId: widget.companyId,
-              companyName: widget.companyName,
-            ),
-          ),
-        );
-      } else {
+
+      if (res['ok'] != true) {
         final reason = switch (res['reason']) {
           'expired' => 'This OTP has expired. Please register again.',
           'invalid' => 'Incorrect OTP. Please try again.',
@@ -69,7 +66,28 @@ class _RegistrationOtpScreenState extends State<RegistrationOtpScreen> {
           _ => 'Verification failed. Please try again.',
         };
         if (mounted) AppFeedback.toast(context, reason, isError: true);
+        return;
       }
+
+      // Step 2 — create the first admin account with the data from registration.
+      await Backend.upsertUserWithPermissions(
+        userData: {
+          ...widget.adminData,
+          'company_id': widget.companyId,
+        },
+        permissionData: const {},
+        isNew: true,
+      );
+
+      if (!mounted) return;
+
+      // Step 3 — navigate to login, clearing the registration stack.
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      AppFeedback.toast(
+        context,
+        'Company registered! Please sign in.',
+        isError: false,
+      );
     } catch (e) {
       if (mounted) AppFeedback.error(context, e);
     } finally {
@@ -144,14 +162,14 @@ class _RegistrationOtpScreenState extends State<RegistrationOtpScreen> {
               borderRadius: BorderRadius.circular(16),
             ),
             child: const Icon(
-              Icons.verified_user_rounded,
+              Icons.mark_email_read_rounded,
               color: AppColors.primaryAmber,
               size: 28,
             ),
           ),
           const SizedBox(height: 16),
           Text(
-            'Enter approval OTP',
+            'Verify your email',
             style: GoogleFonts.outfit(
               fontSize: 20,
               fontWeight: FontWeight.w800,
@@ -159,15 +177,29 @@ class _RegistrationOtpScreenState extends State<RegistrationOtpScreen> {
             ),
           ),
           const SizedBox(height: 6),
-          Text(
-            'A 6-digit code for "${widget.companyName}" was sent to the '
-            'administrator. Enter it below to activate your company.',
-            style: GoogleFonts.outfit(
-              fontSize: 13,
-              height: 1.5,
-              color: isDark
-                  ? AppColors.textWhiteMuted
-                  : AppColors.textDarkMuted,
+          RichText(
+            text: TextSpan(
+              style: GoogleFonts.outfit(
+                fontSize: 13,
+                height: 1.5,
+                color: isDark
+                    ? AppColors.textWhiteMuted
+                    : AppColors.textDarkMuted,
+              ),
+              children: [
+                const TextSpan(text: 'A 6-digit code was sent to '),
+                TextSpan(
+                  text: widget.adminEmail,
+                  style: GoogleFonts.outfit(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: isDark ? AppColors.textWhite : AppColors.textDark,
+                  ),
+                ),
+                const TextSpan(
+                    text:
+                        '. Enter it below to complete your company registration.'),
+              ],
             ),
           ),
           const SizedBox(height: 24),
@@ -221,7 +253,7 @@ class _RegistrationOtpScreenState extends State<RegistrationOtpScreen> {
             onTap: _verify,
             isLoading: _isLoading,
             child: Text(
-              'Verify & Continue',
+              'Verify & Complete Registration',
               style: GoogleFonts.outfit(
                 fontSize: 16,
                 fontWeight: FontWeight.w700,

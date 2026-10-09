@@ -103,6 +103,33 @@ class RestBackend implements PosBackend {
     return (res as Map)['ok'] == true;
   }
 
+  // ─── ROLES ─────────────────────────────────────────────
+  @override
+  Future<List<Map<String, dynamic>>> getRoles(String companyId) async {
+    return _list(await _api.get('/roles', query: {'company_id': companyId}));
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getRoleByName(
+    String companyId,
+    String roleName,
+  ) async {
+    return _map(await _api.get('/roles/by-name', query: {
+      'company_id': companyId,
+      'role_name': roleName,
+    }));
+  }
+
+  @override
+  Future<void> upsertRole(Map<String, dynamic> data) async {
+    await _api.post('/roles', body: data);
+  }
+
+  @override
+  Future<void> deleteRole(String roleId) async {
+    await _api.delete('/roles/$roleId');
+  }
+
   // ─── USERS ─────────────────────────────────────────────
   @override
   Future<List<Map<String, dynamic>>> getUsersForCompany(String companyId) async {

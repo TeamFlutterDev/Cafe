@@ -86,9 +86,13 @@ class UserProfile {
   /// registrations from a dedicated dashboard.
   bool get isOwner => role.toLowerCase() == 'owner';
   bool get isManager => role.toLowerCase() == 'manager';
+  // Legacy roles kept for backward compat with existing DB rows.
   bool get isCashier => role.toLowerCase() == 'cashier';
   bool get isWaiter => role.toLowerCase() == 'waiter';
   bool get isKitchen => role.toLowerCase() == 'kitchen';
+  // New RBAC roles.
+  bool get isStaff => role.toLowerCase() == 'staff' || isCashier || isWaiter;
+  bool get isKitchenMaster => role.toLowerCase() == 'kitchen_master' || isKitchen;
 
   factory UserProfile.fromJson(Map<String, dynamic> json) => UserProfile(
     id: json['id'] as String,
@@ -143,6 +147,8 @@ class UserPermission {
   final bool canVoidItems;
   final bool canManageStock; // Inventory / Stock module (future-ready)
 
+  final bool canManageRoles;
+
   UserPermission({
     required this.userId,
     this.canViewDashboard = false,
@@ -157,6 +163,7 @@ class UserPermission {
     this.canManageSettings = false,
     this.canVoidItems = false,
     this.canManageStock = false,
+    this.canManageRoles = false,
   });
 
   factory UserPermission.fromJson(Map<String, dynamic> json) => UserPermission(
@@ -173,7 +180,27 @@ class UserPermission {
     canManageSettings: json['can_manage_settings'] as bool? ?? false,
     canVoidItems: json['can_void_items'] as bool? ?? false,
     canManageStock: json['can_manage_stock'] as bool? ?? false,
+    canManageRoles: json['can_manage_roles'] as bool? ?? false,
   );
+
+  /// Builds a UserPermission from a `role_master` row (RBAC defaults).
+  factory UserPermission.fromRoleJson(String userId, Map<String, dynamic> json) =>
+      UserPermission(
+        userId: userId,
+        canViewDashboard: json['can_view_dashboard'] as bool? ?? false,
+        canCreateBill: json['can_create_bill'] as bool? ?? false,
+        canEditBill: json['can_edit_bill'] as bool? ?? false,
+        canCancelBill: json['can_cancel_bill'] as bool? ?? false,
+        canApplyDiscount: json['can_apply_discount'] as bool? ?? false,
+        canManageItems: json['can_manage_items'] as bool? ?? false,
+        canManageTables: json['can_manage_tables'] as bool? ?? false,
+        canViewReports: json['can_view_reports'] as bool? ?? false,
+        canManageUsers: json['can_manage_users'] as bool? ?? false,
+        canManageSettings: json['can_manage_settings'] as bool? ?? false,
+        canVoidItems: json['can_void_items'] as bool? ?? false,
+        canManageStock: json['can_manage_stock'] as bool? ?? false,
+        canManageRoles: json['can_manage_roles'] as bool? ?? false,
+      );
 
   Map<String, dynamic> toJson() => {
     'user_id': userId,
@@ -189,6 +216,7 @@ class UserPermission {
     'can_manage_settings': canManageSettings,
     'can_void_items': canVoidItems,
     'can_manage_stock': canManageStock,
+    'can_manage_roles': canManageRoles,
   };
 
   /// Full access — used for admins, who bypass per-module gating.
@@ -206,10 +234,11 @@ class UserPermission {
     canManageSettings: true,
     canVoidItems: true,
     canManageStock: true,
+    canManageRoles: true,
   );
 
-  /// Sensible default access for a role, used when no explicit permission row
-  /// exists yet. Mirrors how Petpooja seeds module access per staff role.
+  /// Hardcoded fallback defaults for a role slug — used only when the
+  /// `role_master` DB row is unreachable. New roles take precedence.
   factory UserPermission.forRole(String userId, String role) {
     switch (role.toLowerCase()) {
       case 'admin':
@@ -228,6 +257,21 @@ class UserPermission {
           canVoidItems: true,
           canManageStock: true,
         );
+      case 'staff':
+        return UserPermission(
+          userId: userId,
+          canCreateBill: true,
+          canManageTables: true,
+          canViewReports: true,
+          canApplyDiscount: true,
+        );
+      case 'kitchen_master':
+        return UserPermission(
+          userId: userId,
+          canManageTables: true,
+          canViewReports: true,
+        );
+      // Legacy roles — mapped for backward compat with old DB rows.
       case 'cashier':
         return UserPermission(
           userId: userId,
@@ -245,7 +289,6 @@ class UserPermission {
       case 'kitchen':
         return UserPermission(
           userId: userId,
-          canCreateBill: false,
           canManageTables: true,
         );
       default:
@@ -1311,4 +1354,171 @@ class CartItem {
   /// price-inheritance rule (override vs. group base rate) is applied in
   /// exactly one place.
   double get rate => item.effectiveRateFor(variant);
+}
+
+// ─── ROLE MASTER ──────────────────────────────────────────────────────────────
+
+/// A role definition stored in `role_master` table (RBAC layer).
+/// Each company has its own role records. System roles (admin, owner) cannot
+/// be deleted. The permissions here are the DEFAULT for every user assigned
+/// this role — admins can override them per-user (UBAC via user_permission).
+class AppRole {
+  final String id;
+  final String companyId;
+  final String roleName;    // slug: 'admin', 'staff', 'manager', 'kitchen_master'
+  final String displayName; // 'Admin', 'Staff', 'Manager', 'Kitchen Master'
+  final String? description;
+  final bool isSystem;      // system roles cannot be deleted
+  final bool isActive;
+  final DateTime? createdAt;
+
+  // RBAC default permissions for this role
+  final bool canViewDashboard;
+  final bool canCreateBill;
+  final bool canEditBill;
+  final bool canCancelBill;
+  final bool canApplyDiscount;
+  final bool canManageItems;
+  final bool canManageTables;
+  final bool canViewReports;
+  final bool canManageUsers;
+  final bool canManageSettings;
+  final bool canVoidItems;
+  final bool canManageStock;
+  final bool canManageRoles;
+
+  const AppRole({
+    required this.id,
+    required this.companyId,
+    required this.roleName,
+    required this.displayName,
+    this.description,
+    this.isSystem = false,
+    this.isActive = true,
+    this.createdAt,
+    this.canViewDashboard = false,
+    this.canCreateBill = false,
+    this.canEditBill = false,
+    this.canCancelBill = false,
+    this.canApplyDiscount = false,
+    this.canManageItems = false,
+    this.canManageTables = false,
+    this.canViewReports = false,
+    this.canManageUsers = false,
+    this.canManageSettings = false,
+    this.canVoidItems = false,
+    this.canManageStock = false,
+    this.canManageRoles = false,
+  });
+
+  factory AppRole.fromJson(Map<String, dynamic> json) => AppRole(
+    id: json['id'] as String,
+    companyId: json['company_id'] as String,
+    roleName: json['role_name'] as String,
+    displayName: json['display_name'] as String,
+    description: json['description'] as String?,
+    isSystem: json['is_system'] as bool? ?? false,
+    isActive: json['is_active'] as bool? ?? true,
+    createdAt: json['created_at'] != null
+        ? DateTime.tryParse(json['created_at'] as String)
+        : null,
+    canViewDashboard: json['can_view_dashboard'] as bool? ?? false,
+    canCreateBill: json['can_create_bill'] as bool? ?? false,
+    canEditBill: json['can_edit_bill'] as bool? ?? false,
+    canCancelBill: json['can_cancel_bill'] as bool? ?? false,
+    canApplyDiscount: json['can_apply_discount'] as bool? ?? false,
+    canManageItems: json['can_manage_items'] as bool? ?? false,
+    canManageTables: json['can_manage_tables'] as bool? ?? false,
+    canViewReports: json['can_view_reports'] as bool? ?? false,
+    canManageUsers: json['can_manage_users'] as bool? ?? false,
+    canManageSettings: json['can_manage_settings'] as bool? ?? false,
+    canVoidItems: json['can_void_items'] as bool? ?? false,
+    canManageStock: json['can_manage_stock'] as bool? ?? false,
+    canManageRoles: json['can_manage_roles'] as bool? ?? false,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'company_id': companyId,
+    'role_name': roleName,
+    'display_name': displayName,
+    'description': description,
+    'is_system': isSystem,
+    'is_active': isActive,
+    'can_view_dashboard': canViewDashboard,
+    'can_create_bill': canCreateBill,
+    'can_edit_bill': canEditBill,
+    'can_cancel_bill': canCancelBill,
+    'can_apply_discount': canApplyDiscount,
+    'can_manage_items': canManageItems,
+    'can_manage_tables': canManageTables,
+    'can_view_reports': canViewReports,
+    'can_manage_users': canManageUsers,
+    'can_manage_settings': canManageSettings,
+    'can_void_items': canVoidItems,
+    'can_manage_stock': canManageStock,
+    'can_manage_roles': canManageRoles,
+  };
+
+  AppRole copyWith({
+    String? id,
+    String? companyId,
+    String? roleName,
+    String? displayName,
+    String? description,
+    bool? isSystem,
+    bool? isActive,
+    bool? canViewDashboard,
+    bool? canCreateBill,
+    bool? canEditBill,
+    bool? canCancelBill,
+    bool? canApplyDiscount,
+    bool? canManageItems,
+    bool? canManageTables,
+    bool? canViewReports,
+    bool? canManageUsers,
+    bool? canManageSettings,
+    bool? canVoidItems,
+    bool? canManageStock,
+    bool? canManageRoles,
+  }) => AppRole(
+    id: id ?? this.id,
+    companyId: companyId ?? this.companyId,
+    roleName: roleName ?? this.roleName,
+    displayName: displayName ?? this.displayName,
+    description: description ?? this.description,
+    isSystem: isSystem ?? this.isSystem,
+    isActive: isActive ?? this.isActive,
+    createdAt: createdAt,
+    canViewDashboard: canViewDashboard ?? this.canViewDashboard,
+    canCreateBill: canCreateBill ?? this.canCreateBill,
+    canEditBill: canEditBill ?? this.canEditBill,
+    canCancelBill: canCancelBill ?? this.canCancelBill,
+    canApplyDiscount: canApplyDiscount ?? this.canApplyDiscount,
+    canManageItems: canManageItems ?? this.canManageItems,
+    canManageTables: canManageTables ?? this.canManageTables,
+    canViewReports: canViewReports ?? this.canViewReports,
+    canManageUsers: canManageUsers ?? this.canManageUsers,
+    canManageSettings: canManageSettings ?? this.canManageSettings,
+    canVoidItems: canVoidItems ?? this.canVoidItems,
+    canManageStock: canManageStock ?? this.canManageStock,
+    canManageRoles: canManageRoles ?? this.canManageRoles,
+  );
+
+  /// Convert this role's defaults into a UserPermission for a specific user.
+  UserPermission toUserPermission(String userId) => UserPermission(
+    userId: userId,
+    canViewDashboard: canViewDashboard,
+    canCreateBill: canCreateBill,
+    canEditBill: canEditBill,
+    canCancelBill: canCancelBill,
+    canApplyDiscount: canApplyDiscount,
+    canManageItems: canManageItems,
+    canManageTables: canManageTables,
+    canViewReports: canViewReports,
+    canManageUsers: canManageUsers,
+    canManageSettings: canManageSettings,
+    canVoidItems: canVoidItems,
+    canManageStock: canManageStock,
+    canManageRoles: canManageRoles,
+  );
 }

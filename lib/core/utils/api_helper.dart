@@ -73,8 +73,13 @@ ApiException _classify(Object e) {
     return ApiException(ApiErrorType.clientError, e.message);
   }
   final msg = e.toString();
-  // Catch network-style strings from the HTTP layer
-  if (msg.contains('SocketException') || msg.contains('Connection refused') || msg.contains('Network is unreachable')) {
+  // Catch network-style strings from the HTTP layer (including Flutter web's
+  // BrowserClient which throws ClientException for CORS/network failures).
+  if (msg.contains('SocketException') ||
+      msg.contains('Connection refused') ||
+      msg.contains('Network is unreachable') ||
+      msg.contains('XMLHttpRequest error') ||
+      msg.contains('ClientException')) {
     return ApiException(ApiErrorType.network, msg);
   }
   if (msg.contains('TimeoutException')) {

@@ -22,11 +22,15 @@ import '../../../providers/providers.dart';
 
 // ─── Role meta ───────────────────────────────────────────────────────────────
 
-const _roles = ['admin', 'manager', 'cashier', 'waiter', 'kitchen'];
+/// Fallback role slugs shown when role_master table is empty / unreachable.
+const _defaultRoleSlugs = ['admin', 'manager', 'staff', 'kitchen_master'];
 
 Color _roleColor(String role) => switch (role.toLowerCase()) {
   'admin' => const Color(0xFFD32F2F),
   'manager' => const Color(0xFF5C6BC0),
+  'staff' => const Color(0xFF388E3C),
+  'kitchen_master' => const Color(0xFF00897B),
+  // Legacy backward-compat
   'cashier' => const Color(0xFF388E3C),
   'waiter' => const Color(0xFFFF8F00),
   'kitchen' => const Color(0xFF00897B),
@@ -36,6 +40,9 @@ Color _roleColor(String role) => switch (role.toLowerCase()) {
 IconData _roleIcon(String role) => switch (role.toLowerCase()) {
   'admin' => Icons.admin_panel_settings_rounded,
   'manager' => Icons.manage_accounts_rounded,
+  'staff' => Icons.badge_rounded,
+  'kitchen_master' => Icons.restaurant_rounded,
+  // Legacy backward-compat
   'cashier' => Icons.point_of_sale_rounded,
   'waiter' => Icons.room_service_rounded,
   'kitchen' => Icons.restaurant_rounded,
@@ -57,6 +64,7 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
   bool _isEditing = false;
   UserProfile? _selectedUser;
   UserPermission? _selectedPermissions;
+  List<AppRole> _roles = [];
 
   // Form
   final _formKey = GlobalKey<FormState>();
@@ -75,7 +83,7 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
   final _phoneFocus = FocusNode();
   final _emailFocus = FocusNode();
 
-  String _selectedRole = 'cashier';
+  String _selectedRole = 'staff';
   bool _isActive = true;
   bool _showPassword = false;
   XFile? _pickedImage;
@@ -87,6 +95,27 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
   void initState() {
     super.initState();
     _loadUsers();
+    _loadRoles();
+  }
+
+  Future<void> _loadRoles() async {
+    final user = ref.read(authStateProvider).value;
+    if (user == null) return;
+    try {
+      final data = await Backend.getRoles(user.companyId);
+      if (mounted) {
+        setState(() {
+          _roles = data.map((e) => AppRole.fromJson(e)).toList();
+          // Default to first non-admin role when available.
+          if (_roles.isNotEmpty && !_roles.any((r) => r.roleName == _selectedRole)) {
+            final nonAdmin = _roles.where((r) => r.roleName != 'admin').toList();
+            if (nonAdmin.isNotEmpty) _selectedRole = nonAdmin.first.roleName;
+          }
+        });
+      }
+    } catch (_) {
+      // Fallback to hardcoded slugs — role dropdown still usable.
+    }
   }
 
   @override
@@ -209,7 +238,9 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
     _passwordController.clear();
     _phoneController.clear();
     _emailController.clear();
-    _selectedRole = 'cashier';
+    _selectedRole = _roles.isNotEmpty
+        ? (_roles.where((r) => r.roleName != 'admin').firstOrNull?.roleName ?? 'staff')
+        : 'staff';
     _isActive = true;
     _avatarUrl = null;
     _pickedImage = null;
@@ -704,6 +735,9 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
   String _webRole = 'all';
   static final _lastLoginFmt = DateFormat('d MMM, hh:mm a');
 
+  /// Unique role slugs present in the loaded user list.
+  List<String> get _presentRoles => _users.map((u) => u.role.toLowerCase()).toSet().toList();
+
   Widget _buildWebList(bool isDark, int activeCount) {
     int roleCount(String r) => _users.where((u) => u.role.toLowerCase() == r).length;
     final online = _users.where((u) => u.isLogin).length;
@@ -721,7 +755,7 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
               label: 'Team members',
               value: '${_users.length}',
               icon: Icons.people_alt_rounded,
-              caption: '${_roles.where((r) => roleCount(r) > 0).length} roles in use',
+              caption: '${_presentRoles.where((r) => roleCount(r) > 0).length} roles in use',
             ),
             WebStatTile(
               label: 'Active',
@@ -754,9 +788,14 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
             onChanged: (v) => setState(() => _webRole = v),
             segments: [
               WebSegment('all', 'All roles', count: _users.length),
-              for (final r in _roles)
+              for (final r in _presentRoles)
                 if (roleCount(r) > 0)
-                  WebSegment(r, '${r[0].toUpperCase()}${r.substring(1)}', count: roleCount(r)),
+                  WebSegment(
+                    r,
+                    _roles.where((ar) => ar.roleName == r).firstOrNull?.displayName
+                        ?? '${r[0].toUpperCase()}${r.substring(1)}',
+                    count: roleCount(r),
+                  ),
             ],
           ),
         ),
@@ -1805,36 +1844,51 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
   }
 
   Widget _roleDropdown(bool isDark) {
+    // Use DB roles when loaded; otherwise fall back to hardcoded slugs.
+    final slugs = _roles.isNotEmpty
+        ? _roles.map((r) => r.roleName).toList()
+        : _defaultRoleSlugs;
+    final effectiveRole = slugs.contains(_selectedRole) ? _selectedRole : slugs.first;
+
     return DropdownButtonFormField<String>(
-      initialValue: _roles.contains(_selectedRole)
-          ? _selectedRole
-          : _roles.first,
+      value: effectiveRole,
       isExpanded: true,
-      items: _roles
+      items: slugs
           .map(
-            (r) => DropdownMenuItem(
-              value: r,
-              child: Row(
-                children: [
-                  Icon(_roleIcon(r), size: 14, color: _roleColor(r)),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      r.toUpperCase(),
-                      style: GoogleFonts.inter(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: _roleColor(r),
+            (r) {
+              final label = _roles.where((ar) => ar.roleName == r).firstOrNull?.displayName
+                  ?? '${r[0].toUpperCase()}${r.substring(1).replaceAll('_', ' ')}';
+              return DropdownMenuItem(
+                value: r,
+                child: Row(
+                  children: [
+                    Icon(_roleIcon(r), size: 14, color: _roleColor(r)),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        label.toUpperCase(),
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: _roleColor(r),
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
-                  ),
-                ],
-              ),
-            ),
+                  ],
+                ),
+              );
+            },
           )
           .toList(),
-      onChanged: (v) => setState(() => _selectedRole = v!),
+      onChanged: (v) {
+        if (v == null) return;
+        setState(() {
+          _selectedRole = v;
+          // Auto-apply role preset when role changes (RBAC).
+          if (_selectedPermissions != null) _applyRolePreset();
+        });
+      },
       decoration: InputDecoration(
         labelText: 'Role',
         labelStyle: GoogleFonts.inter(fontSize: 13),
@@ -1900,9 +1954,9 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
           ],
         ),
         const SizedBox(height: 10),
-        // Apply the default access template for the selected role.
+        // Apply the default access template for the selected role (RBAC).
         _quickPermBtn(
-          "Apply '${_selectedRole.toUpperCase()}' preset",
+          "Apply '${_roles.where((r) => r.roleName == _selectedRole).firstOrNull?.displayName ?? _selectedRole.toUpperCase()}' preset",
           Icons.auto_fix_high_rounded,
           _roleColor(_selectedRole),
           isDark,
@@ -2060,6 +2114,17 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
                 }),
               ),
             ),
+            _PermItem(
+              'Manage Roles (RBAC)',
+              Icons.shield_rounded,
+              p.canManageRoles,
+              (v) => _updatePerm(
+                (p) => UserPermission.fromJson({
+                  ...p.toJson(),
+                  'can_manage_roles': v,
+                }),
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 14),
@@ -2144,14 +2209,15 @@ class _UserMasterScreenState extends ConsumerState<UserMasterScreen> {
     });
   }
 
-  /// Applies the sensible default access for the currently selected role —
-  /// mirrors how Petpooja seeds per-role module access as a starting point.
+  /// Applies the default access for the selected role. Uses the DB-stored
+  /// role_master permissions (RBAC) when available; falls back to hardcoded.
   void _applyRolePreset() {
+    final userId = _selectedPermissions!.userId;
+    final dbRole = _roles.where((r) => r.roleName == _selectedRole).firstOrNull;
     setState(() {
-      _selectedPermissions = UserPermission.forRole(
-        _selectedPermissions!.userId,
-        _selectedRole,
-      );
+      _selectedPermissions = dbRole != null
+          ? dbRole.toUserPermission(userId)
+          : UserPermission.forRole(userId, _selectedRole);
     });
   }
 

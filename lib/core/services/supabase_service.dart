@@ -201,6 +201,38 @@ class SupabaseService {
         .eq('id', userId);
   }
 
+  // ─── ROLES ─────────────────────────────────────────────
+  static Future<List<Map<String, dynamic>>> getRoles(String companyId) async {
+    final res = await client
+        .from('role_master')
+        .select()
+        .eq('company_id', companyId)
+        .order('created_at');
+    return List<Map<String, dynamic>>.from(res as List);
+  }
+
+  static Future<Map<String, dynamic>?> getRoleByName(
+    String companyId,
+    String roleName,
+  ) async {
+    return await client
+        .from('role_master')
+        .select()
+        .eq('company_id', companyId)
+        .eq('role_name', roleName)
+        .maybeSingle();
+  }
+
+  static Future<void> upsertRole(Map<String, dynamic> data) async {
+    await client
+        .from('role_master')
+        .upsert(data, onConflict: 'id');
+  }
+
+  static Future<void> deleteRole(String roleId) async {
+    await client.from('role_master').delete().eq('id', roleId);
+  }
+
   // ─── COMPANY ───────────────────────────────────────────
   static Future<Map<String, dynamic>?> getCompany(String companyId) async {
     final res = await client

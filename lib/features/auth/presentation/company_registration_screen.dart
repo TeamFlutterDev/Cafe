@@ -10,9 +10,10 @@ import 'login_screen.dart'
     show AmbientBackground, FocusableTextField, ScaleButton;
 import 'registration_otp_screen.dart';
 
-/// Step 1 of new-company onboarding: collect company + owner details, then
-/// create an unverified company and dispatch an approval OTP to the owner /
-/// super-admin device(s) via FCM.
+/// Registration — collects company details AND first-admin credentials in one
+/// form, submits to the backend, then hands off to the OTP screen.
+/// After OTP is confirmed the admin account is created automatically and the
+/// user is sent straight to the login screen.
 class CompanyRegistrationScreen extends StatefulWidget {
   const CompanyRegistrationScreen({super.key});
 
@@ -21,33 +22,49 @@ class CompanyRegistrationScreen extends StatefulWidget {
       _CompanyRegistrationScreenState();
 }
 
-class _CompanyRegistrationScreenState extends State<CompanyRegistrationScreen> {
+class _CompanyRegistrationScreenState
+    extends State<CompanyRegistrationScreen> {
+  // Company fields
   final _companyName = TextEditingController();
   final _companyCode = TextEditingController();
-  final _ownerName = TextEditingController();
-  final _ownerEmail = TextEditingController();
-  final _ownerPhone = TextEditingController();
+  // Admin fields
+  final _adminName = TextEditingController();
+  final _adminEmail = TextEditingController();
+  final _adminUsername = TextEditingController();
+  final _adminPassword = TextEditingController();
+  final _adminConfirm = TextEditingController();
+
+  bool _obscure = true;
+  bool _obscureConfirm = true;
   bool _isLoading = false;
 
   @override
   void dispose() {
     _companyName.dispose();
     _companyCode.dispose();
-    _ownerName.dispose();
-    _ownerEmail.dispose();
-    _ownerPhone.dispose();
+    _adminName.dispose();
+    _adminEmail.dispose();
+    _adminUsername.dispose();
+    _adminPassword.dispose();
+    _adminConfirm.dispose();
     super.dispose();
   }
 
   String? _validate() {
     if (_companyName.text.trim().isEmpty) return 'Company name is required';
     if (_companyCode.text.trim().isEmpty) return 'Company code is required';
-    if (_ownerName.text.trim().isEmpty) return 'Owner name is required';
-    final email = _ownerEmail.text.trim();
-    if (email.isEmpty || !email.contains('@'))
-      return 'A valid email is required';
-    final phone = _ownerPhone.text.trim();
-    if (phone.isNotEmpty && phone.length != 10) return 'Enter a 10-digit phone';
+    if (_adminName.text.trim().isEmpty) return 'Admin full name is required';
+    final email = _adminEmail.text.trim();
+    if (email.isEmpty || !email.contains('@')) {
+      return 'A valid admin email is required';
+    }
+    if (_adminUsername.text.trim().isEmpty) return 'Username is required';
+    if (_adminPassword.text.length < 6) {
+      return 'Password must be at least 6 characters';
+    }
+    if (_adminPassword.text != _adminConfirm.text) {
+      return 'Passwords do not match';
+    }
     return null;
   }
 
@@ -63,13 +80,11 @@ class _CompanyRegistrationScreenState extends State<CompanyRegistrationScreen> {
         company: {
           'company_name': _companyName.text.trim(),
           'company_code': _companyCode.text.trim(),
-          'email': _ownerEmail.text.trim(),
-          'phone': _ownerPhone.text.trim(),
+          'email': _adminEmail.text.trim(),
         },
         owner: {
-          'owner_name': _ownerName.text.trim(),
-          'owner_email': _ownerEmail.text.trim(),
-          'owner_phone': _ownerPhone.text.trim(),
+          'owner_name': _adminName.text.trim(),
+          'owner_email': _adminEmail.text.trim(),
         },
       );
       final registrationId = res['registration_id'] as String;
@@ -82,6 +97,14 @@ class _CompanyRegistrationScreenState extends State<CompanyRegistrationScreen> {
             registrationId: registrationId,
             companyId: companyId,
             companyName: _companyName.text.trim(),
+            adminEmail: _adminEmail.text.trim(),
+            adminData: {
+              'user_name': _adminName.text.trim(),
+              'employee_code': 'ADMIN001',
+              'username': _adminUsername.text.trim(),
+              'password': _adminPassword.text,
+              'user_email': _adminEmail.text.trim(),
+            },
           ),
         ),
       );
@@ -116,8 +139,8 @@ class _CompanyRegistrationScreenState extends State<CompanyRegistrationScreen> {
 
   Widget _buildForm(bool isDark) {
     return Container(
-      width: 460,
-      constraints: const BoxConstraints(maxWidth: 460),
+      width: 480,
+      constraints: const BoxConstraints(maxWidth: 480),
       padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
         color: isDark
@@ -134,7 +157,6 @@ class _CompanyRegistrationScreenState extends State<CompanyRegistrationScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Web: breadcrumbs instead of a back button.
           if (WebLayout.enabled) ...[
             Breadcrumbs(
               crumbs: [
@@ -173,7 +195,7 @@ class _CompanyRegistrationScreenState extends State<CompanyRegistrationScreen> {
           Padding(
             padding: const EdgeInsets.only(left: 4),
             child: Text(
-              'An approval OTP will be sent to the administrator for verification.',
+              'A 6-digit OTP will be sent to the admin email for verification.',
               style: GoogleFonts.outfit(
                 fontSize: 13,
                 color: isDark
@@ -183,42 +205,84 @@ class _CompanyRegistrationScreenState extends State<CompanyRegistrationScreen> {
             ),
           ),
           const SizedBox(height: 24),
+
+          // ── Company section ────────────────────────────────────
+          _sectionLabel('Company Details', Icons.business_rounded, isDark),
+          const SizedBox(height: 12),
           FocusableTextField(
             controller: _companyName,
             label: 'Company Name',
             prefixIcon: Icons.business_rounded,
             textInputAction: TextInputAction.next,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           FocusableTextField(
             controller: _companyCode,
             label: 'Company Code',
             prefixIcon: Icons.tag_rounded,
             textInputAction: TextInputAction.next,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 24),
+
+          // ── Admin section ──────────────────────────────────────
+          _sectionLabel('Admin Account', Icons.admin_panel_settings_rounded, isDark),
+          const SizedBox(height: 12),
           FocusableTextField(
-            controller: _ownerName,
-            label: 'Owner / Admin Name',
+            controller: _adminName,
+            label: 'Full Name',
             prefixIcon: Icons.person_outline_rounded,
             textInputAction: TextInputAction.next,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           FocusableTextField(
-            controller: _ownerEmail,
-            label: 'Owner Email',
+            controller: _adminEmail,
+            label: 'Admin Email',
             prefixIcon: Icons.email_outlined,
             keyboardType: TextInputType.emailAddress,
             textInputAction: TextInputAction.next,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           FocusableTextField(
-            controller: _ownerPhone,
-            label: 'Owner Phone (optional)',
-            prefixIcon: Icons.phone_outlined,
-            keyboardType: TextInputType.phone,
+            controller: _adminUsername,
+            label: 'Username',
+            prefixIcon: Icons.alternate_email_rounded,
+            textInputAction: TextInputAction.next,
+          ),
+          const SizedBox(height: 14),
+          FocusableTextField(
+            controller: _adminPassword,
+            label: 'Password',
+            prefixIcon: Icons.lock_outline_rounded,
+            obscureText: _obscure,
+            textInputAction: TextInputAction.next,
+            suffixIcon: IconButton(
+              icon: Icon(
+                _obscure
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+                size: 20,
+              ),
+              onPressed: () => setState(() => _obscure = !_obscure),
+            ),
+          ),
+          const SizedBox(height: 14),
+          FocusableTextField(
+            controller: _adminConfirm,
+            label: 'Confirm Password',
+            prefixIcon: Icons.lock_outline_rounded,
+            obscureText: _obscureConfirm,
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => _submit(),
+            suffixIcon: IconButton(
+              icon: Icon(
+                _obscureConfirm
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+                size: 20,
+              ),
+              onPressed: () =>
+                  setState(() => _obscureConfirm = !_obscureConfirm),
+            ),
           ),
           const SizedBox(height: 28),
           ScaleButton(
@@ -238,4 +302,35 @@ class _CompanyRegistrationScreenState extends State<CompanyRegistrationScreen> {
       ),
     ).animate().fadeIn(duration: 350.ms).moveY(begin: 12, end: 0);
   }
+
+  Widget _sectionLabel(String title, IconData icon, bool isDark) => Row(
+    children: [
+      Container(
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: AppColors.primaryAmber.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(icon, size: 14, color: AppColors.primaryAmber),
+      ),
+      const SizedBox(width: 8),
+      Text(
+        title,
+        style: GoogleFonts.outfit(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: AppColors.primaryAmber,
+          letterSpacing: 0.5,
+        ),
+      ),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Divider(
+          color: isDark
+              ? AppColors.darkBorder.withValues(alpha: 0.4)
+              : AppColors.lightBorder,
+        ),
+      ),
+    ],
+  );
 }

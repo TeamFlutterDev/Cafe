@@ -43,6 +43,22 @@ class SupabaseBackend implements PosBackend {
     newPassword: newPassword,
   );
 
+  // ─── ROLES ─────────────────────────────────────────────
+  @override
+  Future<List<Map<String, dynamic>>> getRoles(String companyId) =>
+      SupabaseService.getRoles(companyId);
+
+  @override
+  Future<Map<String, dynamic>?> getRoleByName(String companyId, String roleName) =>
+      SupabaseService.getRoleByName(companyId, roleName);
+
+  @override
+  Future<void> upsertRole(Map<String, dynamic> data) =>
+      SupabaseService.upsertRole(data);
+
+  @override
+  Future<void> deleteRole(String roleId) => SupabaseService.deleteRole(roleId);
+
   // ─── USERS ─────────────────────────────────────────────
   @override
   Future<List<Map<String, dynamic>>> getUsersForCompany(String companyId) =>

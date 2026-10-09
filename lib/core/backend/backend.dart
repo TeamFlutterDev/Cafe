@@ -45,6 +45,17 @@ class Backend {
     newPassword: newPassword,
   );
 
+  // ─── ROLES ─────────────────────────────────────────────
+  static Future<List<Map<String, dynamic>>> getRoles(String companyId) =>
+      _i.getRoles(companyId);
+
+  static Future<Map<String, dynamic>?> getRoleByName(String companyId, String roleName) =>
+      _i.getRoleByName(companyId, roleName);
+
+  static Future<void> upsertRole(Map<String, dynamic> data) => _i.upsertRole(data);
+
+  static Future<void> deleteRole(String roleId) => _i.deleteRole(roleId);
+
   // ─── USERS ─────────────────────────────────────────────
   static Future<List<Map<String, dynamic>>> getUsersForCompany(String companyId) =>
       _i.getUsersForCompany(companyId);

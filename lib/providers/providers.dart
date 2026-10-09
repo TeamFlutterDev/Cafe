@@ -5,6 +5,17 @@ import '../core/constants/app_constants.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 
+// ─── ROLES (RBAC) ────────────────────────────────────────
+/// All roles for a company from `role_master`. Drives the role dropdown in
+/// User Master and supplies defaults for the permission sync.
+final rolesProvider = FutureProvider.family<List<AppRole>, String>((
+  ref,
+  companyId,
+) async {
+  final res = await Backend.getRoles(companyId);
+  return res.map((e) => AppRole.fromJson(e)).toList();
+});
+
 // ─── AUTH STATE ──────────────────────────────────────────
 final authStateProvider =
     NotifierProvider<AuthNotifier, AsyncValue<UserProfile?>>(AuthNotifier.new);
@@ -22,21 +33,37 @@ class AuthNotifier extends Notifier<AsyncValue<UserProfile?>> {
     return const AsyncValue.loading();
   }
 
-  /// Resolves and caches the signed-in user's module permissions. Admins get
-  /// full access without a DB round-trip; everyone else uses their stored
-  /// permission row, falling back to role defaults when none exists.
+  /// Resolves permissions using RBAC + UBAC:
+  /// 1. Admins always get full access (bypass DB).
+  /// 2. RBAC: load role defaults from `role_master` table.
+  /// 3. UBAC: if a `user_permission` row exists, it wins (admin set overrides).
+  /// 4. Falls back to hardcoded role defaults when the DB is unreachable.
   Future<void> _syncPermissions(UserProfile profile) async {
     UserPermission perms;
     if (profile.isAdmin) {
       perms = UserPermission.all(profile.id);
     } else {
+      // UBAC: user-specific override row always takes priority.
+      Map<String, dynamic>? userRow;
       try {
-        final json = await Backend.getUserPermissions(profile.id);
-        perms = json != null
-            ? UserPermission.fromJson(json)
-            : UserPermission.forRole(profile.id, profile.role);
-      } catch (_) {
-        perms = UserPermission.forRole(profile.id, profile.role);
+        userRow = await Backend.getUserPermissions(profile.id);
+      } catch (_) {}
+
+      if (userRow != null) {
+        perms = UserPermission.fromJson(userRow);
+      } else {
+        // RBAC: load role's default permissions from role_master table.
+        try {
+          final roleRow = await Backend.getRoleByName(
+            profile.companyId,
+            profile.role,
+          );
+          perms = roleRow != null
+              ? UserPermission.fromRoleJson(profile.id, roleRow)
+              : UserPermission.forRole(profile.id, profile.role);
+        } catch (_) {
+          perms = UserPermission.forRole(profile.id, profile.role);
+        }
       }
     }
     await ref.read(permissionsProvider.notifier).set(perms);
